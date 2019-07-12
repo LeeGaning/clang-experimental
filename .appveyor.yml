@@ -50,7 +50,6 @@ before_test:
 
 test_script:
     echo "Test Script"
-    %CYG_BASH% -lc "source /cygdrive/c/projects/clang-experimental/tests.sh"
 
 after_test:
     echo "After Test"
