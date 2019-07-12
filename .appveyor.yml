@@ -16,7 +16,7 @@ install:
 
 branches:
     only:
-    - master
+    - appveyor
 image:
 - Visual Studio 2017
 configuration:
