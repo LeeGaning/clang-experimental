@@ -1,0 +1,56 @@
+version: '{build}'
+
+environment:
+    global:
+        CYG_ROOT: C:\cygwin64
+        CYG_MIRROR: http://cygwin.mirror.constant.com
+        CYG_CACHE: C:\cygwin64\var\cache\setup
+        CYG_BASH: C:\cygwin64\bin\bash
+
+cache:
+  - '%CYG_CACHE%'
+
+install:
+    - '%CYG_ROOT%\setup-x86_64.exe --quiet-mode --no-shortcuts --upgrade-also --packages autoconf,autogen,automake,cygwin-devel,git,gcc-core,gcc-g++,libncurses-devel,libprotobuf-devel,make,zip,openssh,openssl-devel,perl,perl_pods,pkg-config,tmux,zlib-devel'
+    - '%CYG_ROOT%\bin\cygcheck -dc cygwin'
+
+branches:
+    only:
+    - master
+image:
+- Visual Studio 2017
+configuration:
+- Release
+platform:
+- x64
+
+before_build:
+- cmd: |-
+    call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvars64.bat"
+    %CYG_BASH% -lc "source /cygdrive/c/projects/clang-experimental/build.sh"
+
+build_script:
+    echo "Build Script"
+
+artifacts:
+    - path: build/bin/clang-format.exe
+      name: ClangFormat 
+
+    - path: build/bin/clang-format-experimental.exe
+      name: ExperimentalClangFormat 
+
+    - path: build/clang-format-experimental.zip
+      name: ExperimentalClangFormatZip
+
+after_build:
+    echo "After Build"
+     
+before_test:
+    echo "Before Test"
+
+test_script:
+    echo "Test Script"
+    %CYG_BASH% -lc "source /cygdrive/c/projects/clang-experimental/tests.sh"
+
+after_test:
+    echo "After Test"
