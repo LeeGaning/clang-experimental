@@ -21,6 +21,16 @@ std::unique_ptr<Generator> getHTMLGenerator() {
   return std::move(G.get());
 }
 
+ClangDocContext
+getClangDocContext(std::vector<std::string> UserStylesheets = {}) {
+  ClangDocContext CDCtx;
+  CDCtx.UserStylesheets = {UserStylesheets.begin(), UserStylesheets.end()};
+  CDCtx.UserStylesheets.insert(
+      CDCtx.UserStylesheets.begin(),
+      "../share/clang/clang-doc-default-stylesheet.css");
+  return CDCtx;
+}
+
 TEST(HTMLGeneratorTest, emitNamespaceHTML) {
   NamespaceInfo I;
   I.Name = "Namespace";
@@ -38,11 +48,14 @@ TEST(HTMLGeneratorTest, emitNamespaceHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext({"user-provided-stylesheet.css"});
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title>namespace Namespace</title>
+<link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
+<link rel="stylesheet" href="user-provided-stylesheet.css"/>
 <div>
   <h1>namespace Namespace</h1>
   <h2>Namespaces</h2>
@@ -56,9 +69,7 @@ TEST(HTMLGeneratorTest, emitNamespaceHTML) {
   <h2>Functions</h2>
   <div>
     <h3>OneFunction</h3>
-    <p>
-       OneFunction()
-    </p>
+    <p>OneFunction()</p>
   </div>
   <h2>Enums</h2>
   <div>
@@ -73,14 +84,17 @@ TEST(HTMLGeneratorTest, emitNamespaceHTML) {
 TEST(HTMLGeneratorTest, emitRecordHTML) {
   RecordInfo I;
   I.Name = "r";
+  I.Path = "X/Y/Z";
   I.Namespace.emplace_back(EmptySID, "A", InfoType::IT_namespace);
 
   I.DefLoc = Location(10, llvm::SmallString<16>{"test.cpp"});
   I.Loc.emplace_back(12, llvm::SmallString<16>{"test.cpp"});
 
-  I.Members.emplace_back("int", "X", AccessSpecifier::AS_private);
+  SmallString<16> PathTo;
+  llvm::sys::path::native("path/to", PathTo);
+  I.Members.emplace_back("int", "X/Y", "X", AccessSpecifier::AS_private);
   I.TagType = TagTypeKind::TTK_Class;
-  I.Parents.emplace_back(EmptySID, "F", InfoType::IT_record);
+  I.Parents.emplace_back(EmptySID, "F", InfoType::IT_record, PathTo);
   I.VirtualParents.emplace_back(EmptySID, "G", InfoType::IT_record);
 
   I.ChildRecords.emplace_back(EmptySID, "ChildStruct", InfoType::IT_record);
@@ -93,22 +107,28 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title>class r</title>
+<link rel="stylesheet" href="../../../clang-doc-default-stylesheet.css"/>
 <div>
   <h1>class r</h1>
+  <p>Defined at line 10 of test.cpp</p>
   <p>
-    Defined at line 10 of test.cpp
-  </p>
-  <p>
-    Inherits from F, G
+    Inherits from 
+    <a href="../../../path/to/F.html">F</a>
+    , G
   </p>
   <h2>Members</h2>
   <ul>
-    <li>private int X</li>
+    <li>
+      private 
+      <a href="../int.html">int</a>
+       X
+    </li>
   </ul>
   <h2>Records</h2>
   <ul>
@@ -117,9 +137,7 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
   <h2>Functions</h2>
   <div>
     <h3>OneFunction</h3>
-    <p>
-       OneFunction()
-    </p>
+    <p>OneFunction()</p>
   </div>
   <h2>Enums</h2>
   <div>
@@ -139,8 +157,10 @@ TEST(HTMLGeneratorTest, emitFunctionHTML) {
   I.DefLoc = Location(10, llvm::SmallString<16>{"test.cpp"});
   I.Loc.emplace_back(12, llvm::SmallString<16>{"test.cpp"});
 
-  I.ReturnType = TypeInfo(EmptySID, "void", InfoType::IT_default);
-  I.Params.emplace_back("int", "P");
+  SmallString<16> PathTo;
+  llvm::sys::path::native("path/to", PathTo);
+  I.ReturnType = TypeInfo(EmptySID, "float", InfoType::IT_default, PathTo);
+  I.Params.emplace_back("int", PathTo, "P");
   I.IsMethod = true;
   I.Parent = Reference(EmptySID, "Parent", InfoType::IT_record);
 
@@ -148,19 +168,22 @@ TEST(HTMLGeneratorTest, emitFunctionHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title></title>
+<link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
 <div>
   <h3>f</h3>
   <p>
-    void f(int P)
+    <a href="path/to/float.html">float</a>
+     f(
+    <a href="path/to/int.html">int</a>
+     P)
   </p>
-  <p>
-    Defined at line 10 of test.cpp
-  </p>
+  <p>Defined at line 10 of test.cpp</p>
 </div>
 )raw";
 
@@ -182,19 +205,19 @@ TEST(HTMLGeneratorTest, emitEnumHTML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title></title>
+<link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
 <div>
   <h3>enum class e</h3>
   <ul>
     <li>X</li>
   </ul>
-  <p>
-    Defined at line 10 of test.cpp
-  </p>
+  <p>Defined at line 10 of test.cpp</p>
 </div>
 )raw";
 
@@ -236,34 +259,37 @@ TEST(HTMLGeneratorTest, emitCommentHTML) {
   Extended->Children.back()->Kind = "TextComment";
   Extended->Children.back()->Text = " continues onto the next line.";
 
+  Top.Children.emplace_back(llvm::make_unique<CommentInfo>());
+  CommentInfo *Entities = Top.Children.back().get();
+  Entities->Kind = "ParagraphComment";
+  Entities->Children.emplace_back(llvm::make_unique<CommentInfo>());
+  Entities->Children.back()->Kind = "TextComment";
+  Entities->Children.back()->Name = "ParagraphComment";
+  Entities->Children.back()->Text =
+      " Comment with html entities: &, <, >, \", \'.";
+
   I.Description.emplace_back(std::move(Top));
 
   auto G = getHTMLGenerator();
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  ClangDocContext CDCtx = getClangDocContext();
+  auto Err = G->generateDocForInfo(&I, Actual, CDCtx);
   assert(!Err);
   std::string Expected = R"raw(<!DOCTYPE html>
 <meta charset="utf-8"/>
 <title></title>
+<link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
 <div>
   <h3>f</h3>
-  <p>
-    void f(int I, int J)
-  </p>
-  <p>
-    Defined at line 10 of test.cpp
-  </p>
+  <p>void f(int I, int J)</p>
+  <p>Defined at line 10 of test.cpp</p>
   <div>
     <div>
-      <p>
-         Brief description.
-      </p>
-      <p>
-         Extended description that
-         continues onto the next line.
-      </p>
+      <p> Brief description.</p>
+      <p> Extended description that continues onto the next line.</p>
+      <p> Comment with html entities: &amp;, &lt;, &gt;, &quot;, &apos;.</p>
     </div>
   </div>
 </div>

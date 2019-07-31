@@ -17,7 +17,7 @@ define void @insert_v7i8_v2i16_2(<7 x i8> *%a0, <2 x i16> *%a1) nounwind {
 ; SSE2-NEXT:    punpcklbw {{.*#+}} xmm1 = xmm1[0],xmm0[0],xmm1[1],xmm0[1],xmm1[2],xmm0[2],xmm1[3],xmm0[3],xmm1[4],xmm0[4],xmm1[5],xmm0[5],xmm1[6],xmm0[6],xmm1[7],xmm0[7]
 ; SSE2-NEXT:    shufps {{.*#+}} xmm0 = xmm0[0,1],xmm1[0,3]
 ; SSE2-NEXT:    shufps {{.*#+}} xmm0 = xmm0[2,0,1,3]
-; SSE2-NEXT:    movaps {{.*#+}} xmm1 = [255,255,255,255,255,255,255,255]
+; SSE2-NEXT:    movaps {{.*#+}} xmm1 = [255,0,255,0,255,0,255,0,255,0,255,0,255,0,255,0]
 ; SSE2-NEXT:    andps %xmm0, %xmm1
 ; SSE2-NEXT:    packuswb %xmm1, %xmm1
 ; SSE2-NEXT:    movaps %xmm0, -{{[0-9]+}}(%rsp)
@@ -157,4 +157,36 @@ define void @PR40815(%struct.Mat4* nocapture readonly dereferenceable(64), %stru
   store i128 %8, i128* %18, align 16
   store <4 x float> %5, <4 x float>* %13, align 16
   ret void
+}
+
+define <16 x i32> @PR42819(<8 x i32>* %a0) {
+; SSE-LABEL: PR42819:
+; SSE:       # %bb.0:
+; SSE-NEXT:    movdqu (%rdi), %xmm3
+; SSE-NEXT:    pslldq {{.*#+}} xmm3 = zero,zero,zero,zero,xmm3[0,1,2,3,4,5,6,7,8,9,10,11]
+; SSE-NEXT:    xorps %xmm0, %xmm0
+; SSE-NEXT:    xorps %xmm1, %xmm1
+; SSE-NEXT:    xorps %xmm2, %xmm2
+; SSE-NEXT:    retq
+;
+; AVX-LABEL: PR42819:
+; AVX:       # %bb.0:
+; AVX-NEXT:    vpermilps {{.*#+}} xmm0 = mem[0,0,1,2]
+; AVX-NEXT:    vinsertf128 $1, %xmm0, %ymm0, %ymm0
+; AVX-NEXT:    vxorps %xmm1, %xmm1, %xmm1
+; AVX-NEXT:    vblendps {{.*#+}} ymm1 = ymm1[0,1,2,3,4],ymm0[5,6,7]
+; AVX-NEXT:    vxorps %xmm0, %xmm0, %xmm0
+; AVX-NEXT:    retq
+;
+; AVX512-LABEL: PR42819:
+; AVX512:       # %bb.0:
+; AVX512-NEXT:    vmovdqu (%rdi), %xmm0
+; AVX512-NEXT:    movw $-8192, %ax # imm = 0xE000
+; AVX512-NEXT:    kmovw %eax, %k1
+; AVX512-NEXT:    vpexpandd %zmm0, %zmm0 {%k1} {z}
+; AVX512-NEXT:    retq
+  %1 = load <8 x i32>, <8 x i32>* %a0, align 4
+  %2 = shufflevector <8 x i32> %1, <8 x i32> undef, <16 x i32> <i32 0, i32 1, i32 2, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef, i32 undef>
+  %3 = shufflevector <16 x i32> zeroinitializer, <16 x i32> %2, <16 x i32> <i32 3, i32 4, i32 5, i32 6, i32 7, i32 8, i32 9, i32 10, i32 11, i32 12, i32 13, i32 14, i32 15, i32 16, i32 17, i32 18>
+  ret <16 x i32> %3
 }

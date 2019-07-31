@@ -25,6 +25,7 @@ std::unique_ptr<Generator> getYAMLGenerator() {
 TEST(YAMLGeneratorTest, emitNamespaceYAML) {
   NamespaceInfo I;
   I.Name = "Namespace";
+  I.Path = "path/to/A";
   I.Namespace.emplace_back(EmptySID, "A", InfoType::IT_namespace);
 
   I.ChildNamespaces.emplace_back(EmptySID, "ChildNamespace",
@@ -39,12 +40,13 @@ TEST(YAMLGeneratorTest, emitNamespaceYAML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  auto Err = G->generateDocForInfo(&I, Actual, ClangDocContext());
   assert(!Err);
   std::string Expected =
       R"raw(---
 USR:             '0000000000000000000000000000000000000000'
 Name:            'Namespace'
+Path:            'path/to/A'
 Namespace:
   - Type:            Namespace
     Name:            'A'
@@ -69,15 +71,18 @@ ChildEnums:
 TEST(YAMLGeneratorTest, emitRecordYAML) {
   RecordInfo I;
   I.Name = "r";
+  I.Path = "path/to/r";
   I.Namespace.emplace_back(EmptySID, "A", InfoType::IT_namespace);
 
   I.DefLoc = Location(10, llvm::SmallString<16>{"test.cpp"});
   I.Loc.emplace_back(12, llvm::SmallString<16>{"test.cpp"});
 
-  I.Members.emplace_back("int", "X", AccessSpecifier::AS_private);
+  I.Members.emplace_back("int", "path/to/int", "X",
+                         AccessSpecifier::AS_private);
   I.TagType = TagTypeKind::TTK_Class;
-  I.Parents.emplace_back(EmptySID, "F", InfoType::IT_record);
-  I.VirtualParents.emplace_back(EmptySID, "G", InfoType::IT_record);
+  I.Parents.emplace_back(EmptySID, "F", InfoType::IT_record, "path/to/F");
+  I.VirtualParents.emplace_back(EmptySID, "G", InfoType::IT_record,
+                                "path/to/G");
 
   I.ChildRecords.emplace_back(EmptySID, "ChildStruct", InfoType::IT_record);
   I.ChildFunctions.emplace_back();
@@ -89,12 +94,13 @@ TEST(YAMLGeneratorTest, emitRecordYAML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  auto Err = G->generateDocForInfo(&I, Actual, ClangDocContext());
   assert(!Err);
   std::string Expected =
       R"raw(---
 USR:             '0000000000000000000000000000000000000000'
 Name:            'r'
+Path:            'path/to/r'
 Namespace:
   - Type:            Namespace
     Name:            'A'
@@ -108,14 +114,17 @@ TagType:         Class
 Members:
   - Type:
       Name:            'int'
+      Path:            'path/to/int'
     Name:            'X'
     Access:          Private
 Parents:
   - Type:            Record
     Name:            'F'
+    Path:            'path/to/F'
 VirtualParents:
   - Type:            Record
     Name:            'G'
+    Path:            'path/to/G'
 ChildRecords:
   - Type:            Record
     Name:            'ChildStruct'
@@ -139,8 +148,9 @@ TEST(YAMLGeneratorTest, emitFunctionYAML) {
   I.DefLoc = Location(10, llvm::SmallString<16>{"test.cpp"});
   I.Loc.emplace_back(12, llvm::SmallString<16>{"test.cpp"});
 
-  I.ReturnType = TypeInfo(EmptySID, "void", InfoType::IT_default);
-  I.Params.emplace_back("int", "P");
+  I.ReturnType =
+      TypeInfo(EmptySID, "void", InfoType::IT_default, "path/to/void");
+  I.Params.emplace_back("int", "path/to/int", "P");
   I.IsMethod = true;
   I.Parent = Reference(EmptySID, "Parent", InfoType::IT_record);
 
@@ -148,7 +158,7 @@ TEST(YAMLGeneratorTest, emitFunctionYAML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  auto Err = G->generateDocForInfo(&I, Actual, ClangDocContext());
   assert(!Err);
   std::string Expected =
       R"raw(---
@@ -170,10 +180,12 @@ Parent:
 Params:
   - Type:
       Name:            'int'
+      Path:            'path/to/int'
     Name:            'P'
 ReturnType:
   Type:
     Name:            'void'
+    Path:            'path/to/void'
 ...
 )raw";
   EXPECT_EQ(Expected, Actual.str());
@@ -194,7 +206,7 @@ TEST(YAMLGeneratorTest, emitEnumYAML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  auto Err = G->generateDocForInfo(&I, Actual, ClangDocContext());
   assert(!Err);
   std::string Expected =
       R"raw(---
@@ -331,7 +343,7 @@ TEST(YAMLGeneratorTest, emitCommentYAML) {
   assert(G);
   std::string Buffer;
   llvm::raw_string_ostream Actual(Buffer);
-  auto Err = G->generateDocForInfo(&I, Actual);
+  auto Err = G->generateDocForInfo(&I, Actual, ClangDocContext());
   assert(!Err);
   std::string Expected =
       R"raw(---

@@ -624,7 +624,7 @@ static bool isMultiple(const APInt &C1, const APInt &C2, APInt &Quotient,
   if (IsSigned && C1.isMinSignedValue() && C2.isAllOnesValue())
     return false;
 
-  APInt Remainder(C1.getBitWidth(), /*Val=*/0ULL, IsSigned);
+  APInt Remainder(C1.getBitWidth(), /*val=*/0ULL, IsSigned);
   if (IsSigned)
     APInt::sdivrem(C1, C2, Quotient, Remainder);
   else
@@ -661,7 +661,7 @@ Instruction *InstCombiner::commonIDivTransforms(BinaryOperator &I) {
     // (X / C1) / C2  -> X / (C1*C2)
     if ((IsSigned && match(Op0, m_SDiv(m_Value(X), m_APInt(C1)))) ||
         (!IsSigned && match(Op0, m_UDiv(m_Value(X), m_APInt(C1))))) {
-      APInt Product(C1->getBitWidth(), /*Val=*/0ULL, IsSigned);
+      APInt Product(C1->getBitWidth(), /*val=*/0ULL, IsSigned);
       if (!multiplyOverflows(*C1, *C2, Product, IsSigned))
         return BinaryOperator::Create(I.getOpcode(), X,
                                       ConstantInt::get(Ty, Product));
@@ -669,7 +669,7 @@ Instruction *InstCombiner::commonIDivTransforms(BinaryOperator &I) {
 
     if ((IsSigned && match(Op0, m_NSWMul(m_Value(X), m_APInt(C1)))) ||
         (!IsSigned && match(Op0, m_NUWMul(m_Value(X), m_APInt(C1))))) {
-      APInt Quotient(C1->getBitWidth(), /*Val=*/0ULL, IsSigned);
+      APInt Quotient(C1->getBitWidth(), /*val=*/0ULL, IsSigned);
 
       // (X * C1) / C2 -> X / (C2 / C1) if C2 is a multiple of C1.
       if (isMultiple(*C2, *C1, Quotient, IsSigned)) {
@@ -693,7 +693,7 @@ Instruction *InstCombiner::commonIDivTransforms(BinaryOperator &I) {
     if ((IsSigned && match(Op0, m_NSWShl(m_Value(X), m_APInt(C1))) &&
          *C1 != C1->getBitWidth() - 1) ||
         (!IsSigned && match(Op0, m_NUWShl(m_Value(X), m_APInt(C1))))) {
-      APInt Quotient(C1->getBitWidth(), /*Val=*/0ULL, IsSigned);
+      APInt Quotient(C1->getBitWidth(), /*val=*/0ULL, IsSigned);
       APInt C1Shifted = APInt::getOneBitSet(
           C1->getBitWidth(), static_cast<unsigned>(C1->getLimitedValue()));
 
@@ -1234,6 +1234,16 @@ Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
     return &I;
   }
 
+  // Sink negation: -X / Y --> -(X / Y)
+  // But don't transform constant expressions because there's an inverse fold.
+  if (match(Op0, m_OneUse(m_FNeg(m_Value(X)))) && !isa<ConstantExpr>(Op0))
+    return BinaryOperator::CreateFNegFMF(Builder.CreateFDivFMF(X, Op1, &I), &I);
+
+  // Sink negation: Y / -X --> -(Y / X)
+  // But don't transform constant expressions because there's an inverse fold.
+  if (match(Op1, m_OneUse(m_FNeg(m_Value(X)))) && !isa<ConstantExpr>(Op1))
+    return BinaryOperator::CreateFNegFMF(Builder.CreateFDivFMF(Op0, X, &I), &I);
+
   // X / (X * Y) --> 1.0 / Y
   // Reassociate to (X / X -> 1.0) is legal when NaNs are not allowed.
   // We can ignore the possibility that X is infinity because INF/INF is NaN.
@@ -1309,6 +1319,8 @@ Instruction *InstCombiner::visitURem(BinaryOperator &I) {
   Value *Op0 = I.getOperand(0), *Op1 = I.getOperand(1);
   Type *Ty = I.getType();
   if (isKnownToBeAPowerOfTwo(Op1, /*OrZero*/ true, 0, &I)) {
+    // This may increase instruction count, we don't enforce that Y is a
+    // constant.
     Constant *N1 = Constant::getAllOnesValue(Ty);
     Value *Add = Builder.CreateAdd(Op1, N1);
     return BinaryOperator::CreateAnd(Op0, Add);

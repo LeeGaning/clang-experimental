@@ -51,6 +51,10 @@ public:
                      MachineIRBuilder &MIRBuilder, bool Signed) const;
   bool legalizeMinNumMaxNum(MachineInstr &MI, MachineRegisterInfo &MRI,
                             MachineIRBuilder &MIRBuilder) const;
+  bool legalizeExtractVectorElt(MachineInstr &MI, MachineRegisterInfo &MRI,
+                                MachineIRBuilder &MIRBuilder) const;
+  bool legalizeInsertVectorElt(MachineInstr &MI, MachineRegisterInfo &MRI,
+                               MachineIRBuilder &MIRBuilder) const;
 
   Register getLiveInRegister(MachineRegisterInfo &MRI,
                              Register Reg, LLT Ty) const;
@@ -60,6 +64,9 @@ public:
   bool legalizePreloadedArgIntrin(
     MachineInstr &MI, MachineRegisterInfo &MRI, MachineIRBuilder &B,
     AMDGPUFunctionArgInfo::PreloadedValue ArgType) const;
+
+  bool legalizeFDIVFast(MachineInstr &MI, MachineRegisterInfo &MRI,
+                        MachineIRBuilder &B) const;
 
   bool legalizeImplicitArgPtr(MachineInstr &MI, MachineRegisterInfo &MRI,
                               MachineIRBuilder &B) const;

@@ -1998,6 +1998,15 @@ bool isKnownNonZero(const Value *V, unsigned Depth, const Query &Q) {
       // Must be non-zero due to null test above.
       return true;
 
+    if (auto *CE = dyn_cast<ConstantExpr>(C)) {
+      // See the comment for IntToPtr/PtrToInt instructions below.
+      if (CE->getOpcode() == Instruction::IntToPtr ||
+          CE->getOpcode() == Instruction::PtrToInt)
+        if (Q.DL.getTypeSizeInBits(CE->getOperand(0)->getType()) <=
+            Q.DL.getTypeSizeInBits(CE->getType()))
+          return isKnownNonZero(CE->getOperand(0), Depth, Q);
+    }
+
     // For constant vectors, check that all elements are undefined or known
     // non-zero to determine that the whole vector is known non-zero.
     if (auto *VecTy = dyn_cast<VectorType>(C->getType())) {
@@ -3253,12 +3262,7 @@ Value *llvm::isBytewiseValue(Value *V, const DataLayout &DL) {
     return Val;
   }
 
-  if (isa<ConstantVector>(C)) {
-    Constant *Splat = cast<ConstantVector>(C)->getSplatValue();
-    return Splat ? isBytewiseValue(Splat, DL) : nullptr;
-  }
-
-  if (isa<ConstantArray>(C) || isa<ConstantStruct>(C)) {
+  if (isa<ConstantAggregate>(C)) {
     Value *Val = UndefInt8;
     for (unsigned I = 0, E = C->getNumOperands(); I != E; ++I)
       if (!(Val = Merge(Val, isBytewiseValue(C->getOperand(I), DL))))
@@ -3662,7 +3666,8 @@ bool llvm::isIntrinsicReturningPointerAliasingArgumentWithoutCapturing(
     const CallBase *Call) {
   return Call->getIntrinsicID() == Intrinsic::launder_invariant_group ||
          Call->getIntrinsicID() == Intrinsic::strip_invariant_group ||
-         Call->getIntrinsicID() == Intrinsic::aarch64_irg;
+         Call->getIntrinsicID() == Intrinsic::aarch64_irg ||
+         Call->getIntrinsicID() == Intrinsic::aarch64_tagp;
 }
 
 /// \p PN defines a loop-variant pointer to an object.  Check if the
@@ -4216,22 +4221,9 @@ OverflowResult llvm::computeOverflowForSignedAdd(const Value *LHS,
 }
 
 bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
-  // A memory operation returns normally if it isn't volatile. A volatile
-  // operation is allowed to trap.
-  //
-  // An atomic operation isn't guaranteed to return in a reasonable amount of
-  // time because it's possible for another thread to interfere with it for an
+  // Note: An atomic operation isn't guaranteed to return in a reasonable amount
+  // of time because it's possible for another thread to interfere with it for an
   // arbitrary length of time, but programs aren't allowed to rely on that.
-  if (const LoadInst *LI = dyn_cast<LoadInst>(I))
-    return !LI->isVolatile();
-  if (const StoreInst *SI = dyn_cast<StoreInst>(I))
-    return !SI->isVolatile();
-  if (const AtomicCmpXchgInst *CXI = dyn_cast<AtomicCmpXchgInst>(I))
-    return !CXI->isVolatile();
-  if (const AtomicRMWInst *RMWI = dyn_cast<AtomicRMWInst>(I))
-    return !RMWI->isVolatile();
-  if (const MemIntrinsic *MII = dyn_cast<MemIntrinsic>(I))
-    return !MII->isVolatile();
 
   // If there is no successor, then execution can't transfer to it.
   if (const auto *CRI = dyn_cast<CleanupReturnInst>(I))
@@ -4272,10 +4264,7 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
 
     // FIXME: This isn't aggressive enough; a call which only writes to a global
     // is guaranteed to return.
-    return CS.onlyReadsMemory() || CS.onlyAccessesArgMemory() ||
-           match(I, m_Intrinsic<Intrinsic::assume>()) ||
-           match(I, m_Intrinsic<Intrinsic::sideeffect>()) ||
-           match(I, m_Intrinsic<Intrinsic::experimental_widenable_condition>());
+    return CS.onlyReadsMemory() || CS.onlyAccessesArgMemory();
   }
 
   // Other instructions return normally.

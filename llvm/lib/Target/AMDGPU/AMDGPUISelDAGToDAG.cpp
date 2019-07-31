@@ -230,6 +230,7 @@ private:
   bool SelectMOVRELOffset(SDValue Index, SDValue &Base, SDValue &Offset) const;
 
   bool SelectVOP3Mods_NNaN(SDValue In, SDValue &Src, SDValue &SrcMods) const;
+  bool SelectVOP3Mods_f32(SDValue In, SDValue &Src, SDValue &SrcMods) const;
   bool SelectVOP3ModsImpl(SDValue In, SDValue &Src, unsigned &SrcMods) const;
   bool SelectVOP3Mods(SDValue In, SDValue &Src, SDValue &SrcMods) const;
   bool SelectVOP3NoMods(SDValue In, SDValue &Src) const;
@@ -281,6 +282,7 @@ private:
   void SelectDSAppendConsume(SDNode *N, unsigned IntrID);
   void SelectDS_GWS(SDNode *N, unsigned IntrID);
   void SelectINTRINSIC_W_CHAIN(SDNode *N);
+  void SelectINTRINSIC_WO_CHAIN(SDNode *N);
   void SelectINTRINSIC_VOID(SDNode *N);
 
 protected:
@@ -619,10 +621,10 @@ MachineSDNode *AMDGPUDAGToDAGISel::buildSMovImm64(SDLoc &DL, uint64_t Imm,
                                                   EVT VT) const {
   SDNode *Lo = CurDAG->getMachineNode(
       AMDGPU::S_MOV_B32, DL, MVT::i32,
-      CurDAG->getConstant(Imm & 0xFFFFFFFF, DL, MVT::i32));
+      CurDAG->getTargetConstant(Imm & 0xFFFFFFFF, DL, MVT::i32));
   SDNode *Hi =
       CurDAG->getMachineNode(AMDGPU::S_MOV_B32, DL, MVT::i32,
-                             CurDAG->getConstant(Imm >> 32, DL, MVT::i32));
+                             CurDAG->getTargetConstant(Imm >> 32, DL, MVT::i32));
   const SDValue Ops[] = {
       CurDAG->getTargetConstant(AMDGPU::SReg_64RegClassID, DL, MVT::i32),
       SDValue(Lo, 0), CurDAG->getTargetConstant(AMDGPU::sub0, DL, MVT::i32),
@@ -905,6 +907,10 @@ void AMDGPUDAGToDAGISel::Select(SDNode *N) {
   }
   case ISD::INTRINSIC_W_CHAIN: {
     SelectINTRINSIC_W_CHAIN(N);
+    return;
+  }
+  case ISD::INTRINSIC_WO_CHAIN: {
+    SelectINTRINSIC_WO_CHAIN(N);
     return;
   }
   case ISD::INTRINSIC_VOID: {
@@ -2157,10 +2163,12 @@ void AMDGPUDAGToDAGISel::SelectDS_GWS(SDNode *N, unsigned IntrID) {
   // offset field) % 64. Some versions of the programming guide omit the m0
   // part, or claim it's from offset 0.
   if (ConstantSDNode *ConstOffset = dyn_cast<ConstantSDNode>(BaseOffset)) {
-    // If we have a constant offset, try to use the default value for m0 as a
-    // base to possibly avoid setting it up.
-    glueCopyToM0(N, CurDAG->getTargetConstant(-1, SL, MVT::i32));
-    ImmOffset = ConstOffset->getZExtValue() + 1;
+    // If we have a constant offset, try to use the 0 in m0 as the base.
+    // TODO: Look into changing the default m0 initialization value. If the
+    // default -1 only set the low 16-bits, we could leave it as-is and add 1 to
+    // the immediate offset.
+    glueCopyToM0(N, CurDAG->getTargetConstant(0, SL, MVT::i32));
+    ImmOffset = ConstOffset->getZExtValue();
   } else {
     if (CurDAG->isBaseWithConstantOffset(BaseOffset)) {
       ImmOffset = BaseOffset.getConstantOperandVal(1);
@@ -2232,6 +2240,28 @@ void AMDGPUDAGToDAGISel::SelectINTRINSIC_W_CHAIN(SDNode *N) {
   SelectCode(N);
 }
 
+void AMDGPUDAGToDAGISel::SelectINTRINSIC_WO_CHAIN(SDNode *N) {
+  unsigned IntrID = cast<ConstantSDNode>(N->getOperand(0))->getZExtValue();
+  unsigned Opcode;
+  switch (IntrID) {
+  case Intrinsic::amdgcn_wqm:
+    Opcode = AMDGPU::WQM;
+    break;
+  case Intrinsic::amdgcn_softwqm:
+    Opcode = AMDGPU::SOFT_WQM;
+    break;
+  case Intrinsic::amdgcn_wwm:
+    Opcode = AMDGPU::WWM;
+    break;
+  default:
+    SelectCode(N);
+    return;
+  }
+
+  SDValue Src = N->getOperand(1);
+  CurDAG->SelectNodeTo(N, Opcode, N->getVTList(), {Src});
+}
+
 void AMDGPUDAGToDAGISel::SelectINTRINSIC_VOID(SDNode *N) {
   unsigned IntrID = cast<ConstantSDNode>(N->getOperand(1))->getZExtValue();
   switch (IntrID) {
@@ -2283,6 +2313,15 @@ bool AMDGPUDAGToDAGISel::SelectVOP3Mods_NNaN(SDValue In, SDValue &Src,
                                              SDValue &SrcMods) const {
   SelectVOP3Mods(In, Src, SrcMods);
   return isNoNanSrc(Src);
+}
+
+bool AMDGPUDAGToDAGISel::SelectVOP3Mods_f32(SDValue In, SDValue &Src,
+                                            SDValue &SrcMods) const {
+  if (In.getValueType() == MVT::f32)
+    return SelectVOP3Mods(In, Src, SrcMods);
+  Src = In;
+  SrcMods = CurDAG->getTargetConstant(0, SDLoc(In), MVT::i32);;
+  return true;
 }
 
 bool AMDGPUDAGToDAGISel::SelectVOP3NoMods(SDValue In, SDValue &Src) const {

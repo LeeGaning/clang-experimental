@@ -86,7 +86,6 @@
 #include "lldb/Symbol/VerifyDecl.h"
 #include "lldb/Target/ExecutionContext.h"
 #include "lldb/Target/Language.h"
-#include "lldb/Target/ObjCLanguageRuntime.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/DataExtractor.h"
@@ -95,6 +94,7 @@
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Scalar.h"
 
+#include "Plugins/LanguageRuntime/ObjC/ObjCLanguageRuntime.h"
 #include "Plugins/SymbolFile/DWARF/DWARFASTParserClang.h"
 #include "Plugins/SymbolFile/PDB/PDBASTParser.h"
 
@@ -956,7 +956,7 @@ public:
       llvm::SmallVector<char, 32> diag_str(10);
       info.FormatDiagnostic(diag_str);
       diag_str.push_back('\0');
-      m_log->Printf("Compiler diagnostic: %s\n", diag_str.data());
+      LLDB_LOGF(m_log, "Compiler diagnostic: %s\n", diag_str.data());
     }
   }
 
@@ -1615,10 +1615,11 @@ clang::FunctionTemplateDecl *ClangASTContext::CreateFunctionTemplateDecl(
 void ClangASTContext::CreateFunctionTemplateSpecializationInfo(
     FunctionDecl *func_decl, clang::FunctionTemplateDecl *func_tmpl_decl,
     const TemplateParameterInfos &infos) {
-  TemplateArgumentList template_args(TemplateArgumentList::OnStack, infos.args);
+  TemplateArgumentList *template_args_ptr =
+      TemplateArgumentList::CreateCopy(func_decl->getASTContext(), infos.args);
 
-  func_decl->setFunctionTemplateSpecialization(func_tmpl_decl, &template_args,
-                                               nullptr);
+  func_decl->setFunctionTemplateSpecialization(func_tmpl_decl,
+                                               template_args_ptr, nullptr);
 }
 
 ClassTemplateDecl *ClangASTContext::CreateClassTemplateDecl(
