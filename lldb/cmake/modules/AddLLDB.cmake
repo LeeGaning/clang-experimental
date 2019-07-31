@@ -1,4 +1,37 @@
+function(lldb_tablegen)
+  # Syntax:
+  # lldb_tablegen output-file [tablegen-arg ...] SOURCE source-file
+  # [[TARGET cmake-target-name] [DEPENDS extra-dependency ...]]
+  #
+  # Generates a custom command for invoking tblgen as
+  #
+  # tblgen source-file -o=output-file tablegen-arg ...
+  #
+  # and, if cmake-target-name is provided, creates a custom target for
+  # executing the custom command depending on output-file. It is
+  # possible to list more files to depend after DEPENDS.
+
+  cmake_parse_arguments(LTG "" "SOURCE;TARGET" "" ${ARGN})
+
+  if(NOT LTG_SOURCE)
+    message(FATAL_ERROR "SOURCE source-file required by lldb_tablegen")
+  endif()
+
+  set(LLVM_TARGET_DEFINITIONS ${LTG_SOURCE})
+  tablegen(LLDB ${LTG_UNPARSED_ARGUMENTS})
+
+  if(LTG_TARGET)
+    add_public_tablegen_target(${LTG_TARGET})
+    set_target_properties( ${LTG_TARGET} PROPERTIES FOLDER "LLDB tablegenning")
+    set_property(GLOBAL APPEND PROPERTY LLDB_TABLEGEN_TARGETS ${LTG_TARGET})
+  endif()
+endfunction(lldb_tablegen)
+
 function(add_lldb_library name)
+  include_directories(BEFORE
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
   # only supported parameters to this macro are the optional
   # MODULE;SHARED;STATIC library type and source files
   cmake_parse_arguments(PARAM
@@ -89,7 +122,11 @@ function(add_lldb_library name)
   target_compile_options(${name} PRIVATE ${PARAM_EXTRA_CXXFLAGS})
 
   if(PARAM_PLUGIN)
-    set_target_properties(${name} PROPERTIES FOLDER "lldb plugins")
+    get_property(parent_dir DIRECTORY PROPERTY PARENT_DIRECTORY)
+    if(EXISTS ${parent_dir})
+      get_filename_component(category ${parent_dir} NAME)
+      set_target_properties(${name} PROPERTIES FOLDER "lldb plugins/${category}")
+    endif()
   else()
     set_target_properties(${name} PROPERTIES FOLDER "lldb libraries")
   endif()
@@ -166,7 +203,8 @@ endfunction()
 function(lldb_add_to_buildtree_lldb_framework name subdir)
   # Destination for the copy in the build-tree. While the framework target may
   # not exist yet, it will exist when the generator expression gets expanded.
-  set(copy_dest "$<TARGET_FILE_DIR:liblldb>/../../../${subdir}")
+  get_target_property(framework_build_dir liblldb LIBRARY_OUTPUT_DIRECTORY)
+  set(copy_dest "${framework_build_dir}/${subdir}/$<TARGET_FILE_NAME:${name}>")
 
   # Copy into the given subdirectory for testing.
   add_custom_command(TARGET ${name} POST_BUILD
@@ -241,4 +279,28 @@ function(lldb_setup_rpaths name)
     BUILD_RPATH "${LIST_BUILD_RPATH}"
     INSTALL_RPATH "${LIST_INSTALL_RPATH}"
   )
+endfunction()
+
+function(lldb_find_system_debugserver path)
+  execute_process(COMMAND xcode-select -p
+                  RESULT_VARIABLE exit_code
+                  OUTPUT_VARIABLE xcode_dev_dir
+                  ERROR_VARIABLE error_msg
+                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(exit_code)
+    message(WARNING "`xcode-select -p` failed:\n${error_msg}")
+  else()
+    set(subpath "LLDB.framework/Resources/debugserver")
+    set(path_shared "${xcode_dev_dir}/../SharedFrameworks/${subpath}")
+    set(path_private "${xcode_dev_dir}/Library/PrivateFrameworks/${subpath}")
+
+    if(EXISTS ${path_shared})
+      set(${path} ${path_shared} PARENT_SCOPE)
+    elseif(EXISTS ${path_private})
+      set(${path} ${path_private} PARENT_SCOPE)
+    else()
+      message(WARNING "System debugserver requested, but not found. "
+                      "Candidates don't exist: ${path_shared}\n${path_private}")
+    endif()
+  endif()
 endfunction()

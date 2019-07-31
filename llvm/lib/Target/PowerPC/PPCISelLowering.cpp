@@ -1118,6 +1118,8 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setTargetDAGCombine(ISD::ANY_EXTEND);
 
   setTargetDAGCombine(ISD::TRUNCATE);
+  setTargetDAGCombine(ISD::VECTOR_SHUFFLE);
+
 
   if (Subtarget.useCRBits()) {
     setTargetDAGCombine(ISD::TRUNCATE);
@@ -1352,6 +1354,8 @@ const char *PPCTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case PPCISD::SExtVElems:      return "PPCISD::SExtVElems";
   case PPCISD::LXVD2X:          return "PPCISD::LXVD2X";
   case PPCISD::STXVD2X:         return "PPCISD::STXVD2X";
+  case PPCISD::LOAD_VEC_BE:     return "PPCISD::LOAD_VEC_BE";
+  case PPCISD::STORE_VEC_BE:    return "PPCISD::STORE_VEC_BE";
   case PPCISD::ST_VSR_SCAL_INT:
                                 return "PPCISD::ST_VSR_SCAL_INT";
   case PPCISD::COND_BRANCH:     return "PPCISD::COND_BRANCH";
@@ -2233,6 +2237,25 @@ bool llvm::isIntS16Immediate(SDValue Op, int16_t &Imm) {
   return isIntS16Immediate(Op.getNode(), Imm);
 }
 
+
+/// SelectAddressEVXRegReg - Given the specified address, check to see if it can
+/// be represented as an indexed [r+r] operation.
+bool PPCTargetLowering::SelectAddressEVXRegReg(SDValue N, SDValue &Base,
+                                               SDValue &Index,
+                                               SelectionDAG &DAG) const {
+  for (SDNode::use_iterator UI = N->use_begin(), E = N->use_end();
+      UI != E; ++UI) {
+    if (MemSDNode *Memop = dyn_cast<MemSDNode>(*UI)) {
+      if (Memop->getMemoryVT() == MVT::f64) {
+          Base = N.getOperand(0);
+          Index = N.getOperand(1);
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 /// SelectAddressRegReg - Given the specified addressed, check to see if it
 /// can be represented as an indexed [r+r] operation.  Returns false if it
 /// can be more efficiently represented as [r+imm]. If \p EncodingAlignment is
@@ -2244,6 +2267,10 @@ bool PPCTargetLowering::SelectAddressRegReg(SDValue N, SDValue &Base,
                                             unsigned EncodingAlignment) const {
   int16_t imm = 0;
   if (N.getOpcode() == ISD::ADD) {
+    // Is there any SPE load/store (f64), which can't handle 16bit offset?
+    // SPE load/store can only handle 8-bit offsets.
+    if (hasSPE() && SelectAddressEVXRegReg(N, Base, Index, DAG))
+        return true;
     if (isIntS16Immediate(N.getOperand(1), imm) &&
         (!EncodingAlignment || !(imm % EncodingAlignment)))
       return false; // r+i
@@ -13090,6 +13117,60 @@ SDValue PPCTargetLowering::combineStoreFPToInt(SDNode *N,
   return Val;
 }
 
+SDValue PPCTargetLowering::combineVReverseMemOP(ShuffleVectorSDNode *SVN,
+                                                LSBaseSDNode *LSBase,
+                                                DAGCombinerInfo &DCI) const {
+  assert((ISD::isNormalLoad(LSBase) || ISD::isNormalStore(LSBase)) &&
+        "Not a reverse memop pattern!");
+
+  auto IsElementReverse = [](const ShuffleVectorSDNode *SVN) -> bool {
+    auto Mask = SVN->getMask();
+    int i = 0;
+    auto I = Mask.rbegin();
+    auto E = Mask.rend();
+
+    for (; I != E; ++I) {
+      if (*I != i)
+        return false;
+      i++;
+    }
+    return true;
+  };
+
+  SelectionDAG &DAG = DCI.DAG;
+  EVT VT = SVN->getValueType(0);
+
+  if (!isTypeLegal(VT) || !Subtarget.isLittleEndian() || !Subtarget.hasVSX())
+    return SDValue();
+
+  // Before P9, we don't have vector load/store instrs in big-endian
+  // element order for v8i16 or v16i8
+  if (!Subtarget.hasP9Vector() && (VT == MVT::v8i16 || VT == MVT::v16i8))
+    return SDValue();
+
+  if(!IsElementReverse(SVN))
+    return SDValue();
+
+  if (LSBase->getOpcode() == ISD::LOAD) {
+    SDLoc dl(SVN);
+    SDValue LoadOps[] = {LSBase->getChain(), LSBase->getBasePtr()};
+    return DAG.getMemIntrinsicNode(
+        PPCISD::LOAD_VEC_BE, dl, DAG.getVTList(VT, MVT::Other), LoadOps,
+        LSBase->getMemoryVT(), LSBase->getMemOperand());
+  }
+
+  if (LSBase->getOpcode() == ISD::STORE) {
+    SDLoc dl(LSBase);
+    SDValue StoreOps[] = {LSBase->getChain(), SVN->getOperand(0),
+                          LSBase->getBasePtr()};
+    return DAG.getMemIntrinsicNode(
+        PPCISD::STORE_VEC_BE, dl, DAG.getVTList(MVT::Other), StoreOps,
+        LSBase->getMemoryVT(), LSBase->getMemOperand());
+  }
+
+  llvm_unreachable("Expected a load or store node here");
+}
+
 SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
@@ -13136,6 +13217,12 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::SINT_TO_FP:
   case ISD::UINT_TO_FP:
     return combineFPToIntToFP(N, DCI);
+  case ISD::VECTOR_SHUFFLE:
+    if (ISD::isNormalLoad(N->getOperand(0).getNode())) {
+      LSBaseSDNode* LSBase = cast<LSBaseSDNode>(N->getOperand(0));
+      return combineVReverseMemOP(cast<ShuffleVectorSDNode>(N), LSBase, DCI);
+    }
+    break;
   case ISD::STORE: {
 
     EVT Op1VT = N->getOperand(1).getValueType();
@@ -13143,6 +13230,13 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
 
     if (Opcode == ISD::FP_TO_SINT || Opcode == ISD::FP_TO_UINT) {
       SDValue Val= combineStoreFPToInt(N, DCI);
+      if (Val)
+        return Val;
+    }
+
+    if (Opcode == ISD::VECTOR_SHUFFLE && ISD::isNormalStore(N)) {
+      ShuffleVectorSDNode *SVN = cast<ShuffleVectorSDNode>(N->getOperand(1));
+      SDValue Val= combineVReverseMemOP(SVN, cast<LSBaseSDNode>(N), DCI);
       if (Val)
         return Val;
     }
@@ -14313,7 +14407,7 @@ bool PPCTargetLowering::isAccessedAsGotIndirect(SDValue GA) const {
   CodeModel::Model CModel = getTargetMachine().getCodeModel();
   // If it is small or large code model, module locals are accessed
   // indirectly by loading their address from .toc/.got. The difference
-  // is that for large code model we have ADDISTocHa + LDtocL and for
+  // is that for large code model we have ADDIStocHA8 + LDtocL and for
   // small code model we simply have LDtoc.
   if (CModel == CodeModel::Small || CModel == CodeModel::Large)
     return true;

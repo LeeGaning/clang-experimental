@@ -187,7 +187,7 @@ uint32_t SymbolFileBreakpad::CalculateAbilities() {
   return CompileUnits | Functions | LineTables;
 }
 
-uint32_t SymbolFileBreakpad::GetNumCompileUnits() {
+uint32_t SymbolFileBreakpad::CalculateNumCompileUnits() {
   ParseCUData();
   return m_cu_data->GetSize();
 }
@@ -218,7 +218,7 @@ CompUnitSP SymbolFileBreakpad::ParseCompileUnitAtIndex(uint32_t index) {
                                              eLanguageTypeUnknown,
                                              /*is_optimized*/ eLazyBoolNo);
 
-  GetSymbolVendor().SetCompileUnitAtIndex(index, cu_sp);
+  SetCompileUnitAtIndex(index, cu_sp);
   return cu_sp;
 }
 
@@ -228,6 +228,7 @@ size_t SymbolFileBreakpad::ParseFunctions(CompileUnit &comp_unit) {
 }
 
 bool SymbolFileBreakpad::ParseLineTable(CompileUnit &comp_unit) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   CompUnitData &data = m_cu_data->GetEntryRef(comp_unit.GetID()).data;
 
   if (!data.line_table_up)
@@ -239,6 +240,7 @@ bool SymbolFileBreakpad::ParseLineTable(CompileUnit &comp_unit) {
 
 bool SymbolFileBreakpad::ParseSupportFiles(CompileUnit &comp_unit,
                                            FileSpecList &support_files) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   CompUnitData &data = m_cu_data->GetEntryRef(comp_unit.GetID()).data;
   if (!data.support_files)
     ParseLineTableAndSupportFiles(comp_unit, data);
@@ -251,6 +253,7 @@ uint32_t
 SymbolFileBreakpad::ResolveSymbolContext(const Address &so_addr,
                                          SymbolContextItem resolve_scope,
                                          SymbolContext &sc) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   if (!(resolve_scope & (eSymbolContextCompUnit | eSymbolContextLineEntry)))
     return 0;
 
@@ -260,7 +263,7 @@ SymbolFileBreakpad::ResolveSymbolContext(const Address &so_addr,
   if (idx == UINT32_MAX)
     return 0;
 
-  sc.comp_unit = GetSymbolVendor().GetCompileUnitAtIndex(idx).get();
+  sc.comp_unit = GetCompileUnitAtIndex(idx).get();
   SymbolContextItem result = eSymbolContextCompUnit;
   if (resolve_scope & eSymbolContextLineEntry) {
     if (sc.comp_unit->GetLineTable()->FindLineEntryByAddress(so_addr,
@@ -275,12 +278,13 @@ SymbolFileBreakpad::ResolveSymbolContext(const Address &so_addr,
 uint32_t SymbolFileBreakpad::ResolveSymbolContext(
     const FileSpec &file_spec, uint32_t line, bool check_inlines,
     lldb::SymbolContextItem resolve_scope, SymbolContextList &sc_list) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   if (!(resolve_scope & eSymbolContextCompUnit))
     return 0;
 
   uint32_t old_size = sc_list.GetSize();
   for (size_t i = 0, size = GetNumCompileUnits(); i < size; ++i) {
-    CompileUnit &cu = *GetSymbolVendor().GetCompileUnitAtIndex(i);
+    CompileUnit &cu = *GetCompileUnitAtIndex(i);
     cu.ResolveSymbolContext(file_spec, line, check_inlines,
                             /*exact*/ false, resolve_scope, sc_list);
   }
@@ -495,6 +499,7 @@ SymbolFileBreakpad::GetUnwindPlan(const Address &address,
   auto plan_sp = std::make_shared<UnwindPlan>(lldb::eRegisterKindLLDB);
   plan_sp->SetSourceName("breakpad STACK CFI");
   plan_sp->SetUnwindPlanValidAtAllInstructions(eLazyBoolNo);
+  plan_sp->SetUnwindPlanForSignalTrap(eLazyBoolNo);
   plan_sp->SetSourcedFromCompiler(eLazyBoolYes);
   plan_sp->SetPlanValidAddressRange(
       AddressRange(base + init_record->Address, *init_record->Size,
@@ -519,10 +524,6 @@ SymbolFileBreakpad::GetUnwindPlan(const Address &address,
     plan_sp->AppendRow(row_sp);
   }
   return plan_sp;
-}
-
-SymbolVendor &SymbolFileBreakpad::GetSymbolVendor() {
-  return *m_obj_file->GetModule()->GetSymbolVendor();
 }
 
 addr_t SymbolFileBreakpad::GetBaseFileAddress() {

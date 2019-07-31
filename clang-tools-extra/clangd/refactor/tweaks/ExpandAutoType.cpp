@@ -1,4 +1,4 @@
-//===--- ReplaceAutoType.cpp -------------------------------------*- C++-*-===//
+//===--- ExpandAutoType.cpp --------------------------------------*- C++-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -24,6 +24,7 @@
 
 namespace clang {
 namespace clangd {
+namespace {
 
 /// Expand the "auto" type to the derived type
 /// Before:
@@ -53,7 +54,7 @@ private:
 
 REGISTER_TWEAK(ExpandAutoType)
 
-std::string ExpandAutoType::title() const { return "expand auto type"; }
+std::string ExpandAutoType::title() const { return "Expand auto type"; }
 
 bool ExpandAutoType::prepare(const Selection& Inputs) {
   CachedLocation = llvm::None;
@@ -115,5 +116,6 @@ llvm::Error ExpandAutoType::createErrorMessage(const std::string& Message,
                                  ErrorMessage.c_str());
 }
 
+} // namespace
 } // namespace clangd
 } // namespace clang

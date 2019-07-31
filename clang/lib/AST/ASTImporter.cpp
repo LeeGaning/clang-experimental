@@ -1645,7 +1645,6 @@ ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) {
   bool AccumulateChildErrors = isa<TagDecl>(FromDC);
 
   Error ChildErrors = Error::success();
-  llvm::SmallVector<Decl *, 8> ImportedDecls;
   for (auto *From : FromDC->decls()) {
     ExpectedDecl ImportedOrErr = import(From);
     if (!ImportedOrErr) {
@@ -1654,6 +1653,59 @@ ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) {
             joinErrors(std::move(ChildErrors), ImportedOrErr.takeError());
       else
         consumeError(ImportedOrErr.takeError());
+    }
+  }
+
+  // We reorder declarations in RecordDecls because they may have another order
+  // in the "to" context than they have in the "from" context. This may happen
+  // e.g when we import a class like this:
+  //    struct declToImport {
+  //        int a = c + b;
+  //        int b = 1;
+  //        int c = 2;
+  //    };
+  // During the import of `a` we import first the dependencies in sequence,
+  // thus the order would be `c`, `b`, `a`. We will get the normal order by
+  // first removing the already imported members and then adding them in the
+  // order as they apper in the "from" context.
+  //
+  // Keeping field order is vital because it determines structure layout.
+  //
+  // Here and below, we cannot call field_begin() method and its callers on
+  // ToDC if it has an external storage. Calling field_begin() will
+  // automatically load all the fields by calling
+  // LoadFieldsFromExternalStorage(). LoadFieldsFromExternalStorage() would
+  // call ASTImporter::Import(). This is because the ExternalASTSource
+  // interface in LLDB is implemented by the means of the ASTImporter. However,
+  // calling an import at this point would result in an uncontrolled import, we
+  // must avoid that.
+  const auto *FromRD = dyn_cast<RecordDecl>(FromDC);
+  if (!FromRD)
+    return ChildErrors;
+
+  auto ToDCOrErr = Importer.ImportContext(FromDC);
+  if (!ToDCOrErr) {
+    consumeError(std::move(ChildErrors));
+    return ToDCOrErr.takeError();
+  }
+
+  DeclContext *ToDC = *ToDCOrErr;
+  // Remove all declarations, which may be in wrong order in the
+  // lexical DeclContext and then add them in the proper order.
+  for (auto *D : FromRD->decls()) {
+    if (isa<FieldDecl>(D) || isa<FriendDecl>(D)) {
+      assert(D && "DC contains a null decl");
+      Decl *ToD = Importer.GetAlreadyImportedOrNull(D);
+      // Remove only the decls which we successfully imported.
+      if (ToD) {
+        assert(ToDC == ToD->getLexicalDeclContext() && ToDC->containsDecl(ToD));
+        // Remove the decl from its wrong place in the linked list.
+        ToDC->removeDecl(ToD);
+        // Add the decl to the end of the linked list.
+        // This time it will be at the proper place because the enclosing for
+        // loop iterates in the original (good) order of the decls.
+        ToDC->addDeclInternal(ToD);
+      }
     }
   }
 
@@ -1707,6 +1759,17 @@ static Error setTypedefNameForAnonDecl(TagDecl *From, TagDecl *To,
 
 Error ASTNodeImporter::ImportDefinition(
     RecordDecl *From, RecordDecl *To, ImportDefinitionKind Kind) {
+  auto DefinitionCompleter = [To]() {
+    // There are cases in LLDB when we first import a class without its
+    // members. The class will have DefinitionData, but no members. Then,
+    // importDefinition is called from LLDB, which tries to get the members, so
+    // when we get here, the class already has the DefinitionData set, so we
+    // must unset the CompleteDefinition here to be able to complete again the
+    // definition.
+    To->setCompleteDefinition(false);
+    To->completeDefinition();
+  };
+
   if (To->getDefinition() || To->isBeingDefined()) {
     if (Kind == IDK_Everything ||
         // In case of lambdas, the class already has a definition ptr set, but
@@ -1717,7 +1780,7 @@ Error ASTNodeImporter::ImportDefinition(
       Error Result = ImportDeclContext(From, /*ForceImport=*/true);
       // Finish the definition of the lambda, set isBeingDefined to false.
       if (To->isLambda())
-        To->completeDefinition();
+        DefinitionCompleter();
       return Result;
     }
 
@@ -1728,8 +1791,8 @@ Error ASTNodeImporter::ImportDefinition(
   // Complete the definition even if error is returned.
   // The RecordDecl may be already part of the AST so it is better to
   // have it in complete state even if something is wrong with it.
-  auto DefinitionCompleter =
-      llvm::make_scope_exit([To]() { To->completeDefinition(); });
+  auto DefinitionCompleterScopeExit =
+      llvm::make_scope_exit(DefinitionCompleter);
 
   if (Error Err = setTypedefNameForAnonDecl(From, To, Importer))
     return Err;
@@ -7757,10 +7820,20 @@ ASTImporter::findDeclsInToCtx(DeclContext *DC, DeclarationName Name) {
         SharedState->getLookupTable()->lookup(ReDC, Name);
     return FoundDeclsTy(LookupResult.begin(), LookupResult.end());
   } else {
-    // FIXME Can we remove this kind of lookup?
-    // Or lldb really needs this C/C++ lookup?
-    FoundDeclsTy Result;
-    ReDC->localUncachedLookup(Name, Result);
+    DeclContext::lookup_result NoloadLookupResult = ReDC->noload_lookup(Name);
+    FoundDeclsTy Result(NoloadLookupResult.begin(), NoloadLookupResult.end());
+    // We must search by the slow case of localUncachedLookup because that is
+    // working even if there is no LookupPtr for the DC. We could use
+    // DC::buildLookup() to create the LookupPtr, but that would load external
+    // decls again, we must avoid that case.
+    // Also, even if we had the LookupPtr, we must find Decls which are not
+    // in the LookupPtr, so we need the slow case.
+    // These cases are handled in ASTImporterLookupTable, but we cannot use
+    // that with LLDB since that traverses through the AST which initiates the
+    // load of external decls again via DC::decls().  And again, we must avoid
+    // loading external decls during the import.
+    if (Result.empty())
+      ReDC->localUncachedLookup(Name, Result);
     return Result;
   }
 }
@@ -8075,7 +8148,7 @@ ASTImporter::Import(NestedNameSpecifier *FromNNS) {
   if (!FromNNS)
     return nullptr;
 
-  NestedNameSpecifier *Prefix;
+  NestedNameSpecifier *Prefix = nullptr;
   if (Error Err = importInto(Prefix, FromNNS->getPrefix()))
     return std::move(Err);
 
@@ -8400,6 +8473,10 @@ Expected<FileID> ASTImporter::Import(FileID FromID, bool IsBuiltin) {
   assert(ToID.isValid() && "Unexpected invalid fileID was created.");
 
   ImportedFileIDs[FromID] = ToID;
+
+  if (FileIDImportHandler)
+    FileIDImportHandler(ToID, FromID);
+
   return ToID;
 }
 

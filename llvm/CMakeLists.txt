@@ -16,7 +16,7 @@ if(POLICY CMP0077)
 endif()
 
 if(NOT DEFINED LLVM_VERSION_MAJOR)
-  set(LLVM_VERSION_MAJOR 9)
+  set(LLVM_VERSION_MAJOR 10)
 endif()
 if(NOT DEFINED LLVM_VERSION_MINOR)
   set(LLVM_VERSION_MINOR 0)
@@ -95,7 +95,11 @@ if (LLVM_ENABLE_PROJECTS_USED OR NOT LLVM_ENABLE_PROJECTS STREQUAL "")
       if(NOT EXISTS "${PROJ_DIR}" OR NOT IS_DIRECTORY "${PROJ_DIR}")
         message(FATAL_ERROR "LLVM_ENABLE_PROJECTS requests ${proj} but directory not found: ${PROJ_DIR}")
       endif()
-      set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE STRING "")
+      if( LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR STREQUAL "" )
+        set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE PATH "" FORCE)
+      else()
+        set(LLVM_EXTERNAL_${upper_proj}_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${proj}" CACHE PATH "")
+      endif()
     elseif ("${proj}" IN_LIST LLVM_EXTERNAL_PROJECTS)
       message(STATUS "${proj} project is enabled")
       set(SHOULD_ENABLE_PROJECT TRUE)
@@ -285,6 +289,7 @@ set(LLVM_ALL_TARGETS
   MSP430
   NVPTX
   PowerPC
+  RISCV
   Sparc
   SystemZ
   WebAssembly
@@ -568,10 +573,8 @@ if(CMAKE_CROSSCOMPILING OR (LLVM_OPTIMIZED_TABLEGEN AND (LLVM_ENABLE_ASSERTIONS 
   set(LLVM_USE_HOST_TOOLS ON)
 endif()
 
-if (MSVC_IDE AND NOT (MSVC_VERSION LESS 1900))
+if (MSVC_IDE)
   option(LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION "Configure project to use Visual Studio native visualizers" TRUE)
-else()
-  set(LLVM_ADD_NATIVE_VISUALIZERS_TO_SOLUTION FALSE CACHE INTERNAL "For Visual Studio 2013, manually copy natvis files to Documents\\Visual Studio 2013\\Visualizers" FORCE)
 endif()
 
 if (LLVM_BUILD_INSTRUMENTED OR LLVM_BUILD_INSTRUMENTED_COVERAGE OR
@@ -641,8 +644,6 @@ option(LLVM_ENABLE_PLUGINS "Enable plugin support" ${LLVM_ENABLE_PLUGINS_default
 
 include(HandleLLVMOptions)
 
-# We support both Python 2 and 3.
-set(Python_ADDITIONAL_VERSIONS 3.7 3.6 3.5 2.7)
 include(FindPythonInterp)
 if( NOT PYTHONINTERP_FOUND )
   message(FATAL_ERROR
@@ -830,6 +831,11 @@ if (UNIX AND ${CMAKE_SYSTEM_NAME} MATCHES "AIX")
           add_definitions("-D_LARGE_FILE_API")
 endif()
 
+# Build with _FILE_OFFSET_BITS=64 on Solaris to match g++ >= 9.
+if (UNIX AND ${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
+          add_definitions("-D_FILE_OFFSET_BITS=64")
+endif()
+
 # Work around a broken bfd ld behavior. When linking a binary with a
 # foo.so library, it will try to find any library that foo.so uses and
 # check its symbols. This is wasteful (the check was done when foo.so
@@ -847,6 +853,7 @@ include_directories( ${LLVM_INCLUDE_DIR} ${LLVM_MAIN_INCLUDE_DIR})
 # when crosscompiling import the executable targets from a file
 if(LLVM_USE_HOST_TOOLS)
   include(CrossCompile)
+  llvm_create_cross_target(LLVM NATIVE "" Release)
 endif(LLVM_USE_HOST_TOOLS)
 if(LLVM_TARGET_IS_CROSSCOMPILE_HOST)
 # Dummy use to avoid CMake Warning: Manually-specified variables were not used

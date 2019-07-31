@@ -970,6 +970,12 @@ public:
     return isUInt<12>(Imm);
   }
 
+  /// Returns if \p Offset is legal for the subtarget as the offset to a FLAT
+  /// encoded instruction. If \p Signed, this is for an instruction that
+  /// interprets the offset as signed.
+  bool isLegalFLATOffset(int64_t Offset, unsigned AddrSpace,
+                         bool Signed) const;
+
   /// \brief Return a target-specific opcode if Opcode is a pseudo instruction.
   /// Return -1 if the target-specific opcode for the pseudo instruction does
   /// not exist. If Opcode is not a pseudo instruction, this is identity.
@@ -1016,13 +1022,19 @@ MachineInstr *getVRegSubRegDef(const TargetInstrInfo::RegSubRegPair &P,
                                MachineRegisterInfo &MRI);
 
 /// \brief Return false if EXEC is not changed between the def of \p VReg at \p
-/// DefMI and uses. If \p UseMI is not specified, this checks all uses of \p
-/// VReg. Should be run on SSA. Currently does not attempt to track between
-/// blocks.
+/// DefMI and the use at \p UseMI. Should be run on SSA. Currently does not
+/// attempt to track between blocks.
 bool execMayBeModifiedBeforeUse(const MachineRegisterInfo &MRI,
-                                unsigned VReg,
+                                Register VReg,
                                 const MachineInstr &DefMI,
-                                const MachineInstr *UseMI = nullptr);
+                                const MachineInstr &UseMI);
+
+/// \brief Return false if EXEC is not changed between the def of \p VReg at \p
+/// DefMI and all its uses. Should be run on SSA. Currently does not attempt to
+/// track between blocks.
+bool execMayBeModifiedBeforeAnyUse(const MachineRegisterInfo &MRI,
+                                   Register VReg,
+                                   const MachineInstr &DefMI);
 
 namespace AMDGPU {
 

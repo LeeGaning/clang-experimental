@@ -335,6 +335,7 @@ unsigned Parser::ParseAttributeArgsCommon(
   ConsumeParen();
 
   bool ChangeKWThisToIdent = attributeTreatsKeywordThisAsIdentifier(*AttrName);
+  bool AttributeIsTypeArgAttr = attributeIsTypeArgAttr(*AttrName);
 
   // Interpret "kw_this" as an identifier if the attributed requests it.
   if (ChangeKWThisToIdent && Tok.is(tok::kw_this))
@@ -360,6 +361,7 @@ unsigned Parser::ParseAttributeArgsCommon(
       ArgExprs.push_back(ParseIdentifierLoc());
   }
 
+  ParsedType TheParsedType;
   if (!ArgExprs.empty() ? Tok.is(tok::comma) : Tok.isNot(tok::r_paren)) {
     // Eat the comma.
     if (!ArgExprs.empty())
@@ -372,8 +374,17 @@ unsigned Parser::ParseAttributeArgsCommon(
         Tok.setKind(tok::identifier);
 
       ExprResult ArgExpr;
-      if (Tok.is(tok::identifier) &&
-          attributeHasVariadicIdentifierArg(*AttrName)) {
+      if (AttributeIsTypeArgAttr) {
+        TypeResult T = ParseTypeName();
+        if (T.isInvalid()) {
+          SkipUntil(tok::r_paren, StopAtSemi);
+          return 0;
+        }
+        if (T.isUsable())
+          TheParsedType = T.get();
+        break; // FIXME: Multiple type arguments are not implemented.
+      } else if (Tok.is(tok::identifier) &&
+                 attributeHasVariadicIdentifierArg(*AttrName)) {
         ArgExprs.push_back(ParseIdentifierLoc());
       } else {
         bool Uneval = attributeParsedArgsUnevaluated(*AttrName);
@@ -397,14 +408,20 @@ unsigned Parser::ParseAttributeArgsCommon(
   SourceLocation RParen = Tok.getLocation();
   if (!ExpectAndConsume(tok::r_paren)) {
     SourceLocation AttrLoc = ScopeLoc.isValid() ? ScopeLoc : AttrNameLoc;
-    Attrs.addNew(AttrName, SourceRange(AttrLoc, RParen), ScopeName, ScopeLoc,
-                 ArgExprs.data(), ArgExprs.size(), Syntax);
+
+    if (AttributeIsTypeArgAttr && !TheParsedType.get().isNull()) {
+      Attrs.addNewTypeAttr(AttrName, SourceRange(AttrNameLoc, RParen),
+                           ScopeName, ScopeLoc, TheParsedType, Syntax);
+    } else {
+      Attrs.addNew(AttrName, SourceRange(AttrLoc, RParen), ScopeName, ScopeLoc,
+                   ArgExprs.data(), ArgExprs.size(), Syntax);
+    }
   }
 
   if (EndLoc)
     *EndLoc = RParen;
 
-  return static_cast<unsigned>(ArgExprs.size());
+  return static_cast<unsigned>(ArgExprs.size() + !TheParsedType.get().isNull());
 }
 
 /// Parse the arguments to a parameterized GNU attribute or
@@ -3189,7 +3206,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
           Actions.getTypeName(*Next.getIdentifierInfo(), Next.getLocation(),
                               getCurScope(), &SS, false, false, nullptr,
                               /*IsCtorOrDtorName=*/false,
-                              /*WantNonTrivialSourceInfo=*/true,
+                              /*WantNontrivialTypeSourceInfo=*/true,
                               isClassTemplateDeductionContext(DSContext));
 
       // If the referenced identifier is not a type, then this declspec is
@@ -3559,7 +3576,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       isInvalid = DS.setFunctionSpecInline(Loc, PrevSpec, DiagID);
       break;
     case tok::kw_virtual:
-      // OpenCL C++ v1.0 s2.9: the virtual function qualifier is not supported.
+      // C++ for OpenCL does not allow virtual function qualifier, to avoid
+      // function pointers restricted in OpenCL v2.0 s6.9.a.
       if (getLangOpts().OpenCLCPlusPlus) {
         DiagID = diag::err_openclcxx_virtual_function;
         PrevSpec = Tok.getIdentifierInfo()->getNameStart();

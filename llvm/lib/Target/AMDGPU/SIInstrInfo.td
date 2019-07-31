@@ -329,10 +329,12 @@ def AMDGPUatomic_ld_glue : SDNode <"ISD::ATOMIC_LOAD", SDTAtomicLoad,
 
 def unindexedload_glue : PatFrag <(ops node:$ptr), (AMDGPUld_glue node:$ptr)> {
   let IsUnindexed = 1;
+  let IsLoad = 1;
 }
 
 def load_glue : PatFrag <(ops node:$ptr), (unindexedload_glue node:$ptr)> {
   let IsNonExtLoad = 1;
+  let IsLoad = 1;
 }
 
 def atomic_load_32_glue : PatFrag<(ops node:$ptr),
@@ -347,14 +349,15 @@ def atomic_load_64_glue : PatFrag<(ops node:$ptr),
   let MemoryVT = i64;
 }
 
-def extload_glue : PatFrag<(ops node:$ptr), (load_glue node:$ptr)> {
+def extload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr)> {
   let IsLoad = 1;
   let IsAnyExtLoad = 1;
 }
 
-def sextload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr), [{
-  return cast<LoadSDNode>(N)->getExtensionType() == ISD::SEXTLOAD;
-}]>;
+def sextload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr)> {
+  let IsLoad = 1;
+  let IsSignExtLoad = 1;
+}
 
 def zextload_glue : PatFrag<(ops node:$ptr), (unindexedload_glue node:$ptr)> {
   let IsLoad = 1;
@@ -391,23 +394,31 @@ def sextloadi16_glue : PatFrag<(ops node:$ptr), (sextload_glue node:$ptr)> {
   let MemoryVT = i16;
 }
 
-def load_glue_align8 : Aligned8Bytes <
-  (ops node:$ptr), (load_glue node:$ptr)
->;
-def load_glue_align16 : Aligned16Bytes <
-  (ops node:$ptr), (load_glue node:$ptr)
->;
 
+let IsLoad = 1, AddressSpaces = LoadAddress_local.AddrSpaces in {
+def load_local_m0 : PatFrag<(ops node:$ptr), (load_glue node:$ptr)>;
 
-def load_local_m0 : LoadFrag<load_glue>, LocalAddress;
-def sextloadi8_local_m0 : LoadFrag<sextloadi8_glue>, LocalAddress;
-def sextloadi16_local_m0 : LoadFrag<sextloadi16_glue>, LocalAddress;
-def extloadi8_local_m0 : LoadFrag<extloadi8_glue>, LocalAddress;
-def zextloadi8_local_m0 : LoadFrag<zextloadi8_glue>, LocalAddress;
-def extloadi16_local_m0 : LoadFrag<extloadi16_glue>, LocalAddress;
-def zextloadi16_local_m0 : LoadFrag<zextloadi16_glue>, LocalAddress;
-def load_align8_local_m0 : LoadFrag <load_glue_align8>, LocalAddress;
-def load_align16_local_m0 : LoadFrag <load_glue_align16>, LocalAddress;
+let MemoryVT = i8 in {
+def extloadi8_local_m0 : PatFrag<(ops node:$ptr), (extloadi8_glue node:$ptr)>;
+def sextloadi8_local_m0 : PatFrag<(ops node:$ptr), (sextloadi8_glue node:$ptr)>;
+def zextloadi8_local_m0 : PatFrag<(ops node:$ptr), (zextloadi8_glue node:$ptr)>;
+}
+
+let MemoryVT = i16 in {
+def extloadi16_local_m0 : PatFrag<(ops node:$ptr), (extloadi16_glue node:$ptr)>;
+def sextloadi16_local_m0 : PatFrag<(ops node:$ptr), (sextloadi16_glue node:$ptr)>;
+def zextloadi16_local_m0 : PatFrag<(ops node:$ptr), (zextloadi16_glue node:$ptr)>;
+}
+
+def load_align8_local_m0 : LoadFrag <load_glue>, LocalAddress {
+  let MinAlignment = 8;
+}
+def load_align16_local_m0 : LoadFrag <load_glue>, LocalAddress {
+  let MinAlignment = 16;
+}
+
+} // End IsLoad = 1
+
 def atomic_load_32_local_m0 : LoadFrag<atomic_load_32_glue>, LocalAddress;
 def atomic_load_64_local_m0 : LoadFrag<atomic_load_64_glue>, LocalAddress;
 
@@ -425,37 +436,40 @@ def atomic_store_glue : PatFrag<(ops node:$ptr, node:$val),
 }
 
 def unindexedstore_glue : PatFrag<(ops node:$val, node:$ptr),
-                                   (AMDGPUst_glue node:$val, node:$ptr), [{
-  return cast<StoreSDNode>(N)->getAddressingMode() == ISD::UNINDEXED;
-}]>;
+                                   (AMDGPUst_glue node:$val, node:$ptr)> {
+  let IsStore = 1;
+  let IsUnindexed = 1;
+}
 
 def store_glue : PatFrag<(ops node:$val, node:$ptr),
-                      (unindexedstore_glue node:$val, node:$ptr), [{
-  return !cast<StoreSDNode>(N)->isTruncatingStore();
-}]>;
+                         (unindexedstore_glue node:$val, node:$ptr)> {
+  let IsStore = 1;
+  let IsTruncStore = 0;
+}
 
 def truncstore_glue : PatFrag<(ops node:$val, node:$ptr),
-  (unindexedstore_glue node:$val, node:$ptr), [{
-  return cast<StoreSDNode>(N)->isTruncatingStore();
-}]>;
+  (unindexedstore_glue node:$val, node:$ptr)> {
+  let IsStore = 1;
+  let IsTruncStore = 1;
+}
 
 def truncstorei8_glue : PatFrag<(ops node:$val, node:$ptr),
-                           (truncstore_glue node:$val, node:$ptr), [{
-  return cast<StoreSDNode>(N)->getMemoryVT() == MVT::i8;
-}]>;
+                           (truncstore_glue node:$val, node:$ptr)> {
+  let IsStore = 1;
+  let MemoryVT = i8;
+}
 
 def truncstorei16_glue : PatFrag<(ops node:$val, node:$ptr),
-                           (truncstore_glue node:$val, node:$ptr), [{
-  return cast<StoreSDNode>(N)->getMemoryVT() == MVT::i16;
-}]>;
+                           (truncstore_glue node:$val, node:$ptr)> {
+  let IsStore = 1;
+  let MemoryVT = i16;
+}
 
-def store_glue_align8 : Aligned8Bytes <
-  (ops node:$value, node:$ptr), (store_glue node:$value, node:$ptr)
->;
-
-def store_glue_align16 : Aligned16Bytes <
-  (ops node:$value, node:$ptr), (store_glue node:$value, node:$ptr)
->;
+let IsStore = 1, AddressSpaces = StoreAddress_local.AddrSpaces in {
+def store_glue_align8 : PatFrag<(ops node:$val, node:$ptr),
+                                (store_glue node:$val, node:$ptr)>, Aligned<8>;
+def store_glue_align16 : PatFrag<(ops node:$val, node:$ptr),
+                                (store_glue node:$val, node:$ptr)>, Aligned<16>;
 
 def store_local_m0 : StoreFrag<store_glue>, LocalAddress;
 def truncstorei8_local_m0 : StoreFrag<truncstorei8_glue>, LocalAddress;
@@ -464,6 +478,7 @@ def atomic_store_local_m0 : StoreFrag<AMDGPUatomic_st_glue>, LocalAddress;
 
 def store_align8_local_m0 : StoreFrag<store_glue_align8>, LocalAddress;
 def store_align16_local_m0 : StoreFrag<store_glue_align16>, LocalAddress;
+}
 
 def si_setcc_uniform : PatFrag <
   (ops node:$lhs, node:$rhs, node:$cond),
@@ -1140,6 +1155,8 @@ def VOP3Mods  : ComplexPattern<untyped, 2, "SelectVOP3Mods">;
 def VOP3NoMods : ComplexPattern<untyped, 1, "SelectVOP3NoMods">;
 // VOP3Mods, but the input source is known to never be NaN.
 def VOP3Mods_nnan : ComplexPattern<fAny, 2, "SelectVOP3Mods_NNaN">;
+// VOP3Mods, but only allowed for f32 operands.
+def VOP3Mods_f32 : ComplexPattern<fAny, 2, "SelectVOP3Mods_f32">;
 
 def VOP3OMods : ComplexPattern<untyped, 3, "SelectVOP3OMods">;
 
@@ -2176,14 +2193,13 @@ def VOP_I32_V2I16_V2I16_I32 : VOPProfile <[i32, v2i16, v2i16, i32]>;
 
 def VOP_V4F32_F32_F32_V4F32       : VOPProfile <[v4f32,  f32,   f32,   v4f32]>;
 def VOP_V16F32_F32_F32_V16F32     : VOPProfile <[v16f32, f32,   f32,   v16f32]>;
-// TODO: define v32f32
-def VOP_V32F32_F32_F32_V32F32     : VOPProfile <[v32i32, f32,   f32,   v32i32]>;
+def VOP_V32F32_F32_F32_V32F32     : VOPProfile <[v32f32, f32,   f32,   v32f32]>;
 def VOP_V4F32_V4F16_V4F16_V4F32   : VOPProfile <[v4f32,  v4f16, v4f16, v4f32]>;
 def VOP_V16F32_V4F16_V4F16_V16F32 : VOPProfile <[v16f32, v4f16, v4f16, v16f32]>;
-def VOP_V32F32_V4F16_V4F16_V32F32 : VOPProfile <[v32i32, v4f16, v4f16, v32i32]>;
+def VOP_V32F32_V4F16_V4F16_V32F32 : VOPProfile <[v32f32, v4f16, v4f16, v32f32]>;
 def VOP_V4F32_V2I16_V2I16_V4F32   : VOPProfile <[v4f32,  v2i16, v2i16, v4f32]>;
 def VOP_V16F32_V2I16_V2I16_V16F32 : VOPProfile <[v16f32, v2i16, v2i16, v16f32]>;
-def VOP_V32F32_V2I16_V2I16_V32F32 : VOPProfile <[v32i32, v2i16, v2i16, v32i32]>;
+def VOP_V32F32_V2I16_V2I16_V32F32 : VOPProfile <[v32f32, v2i16, v2i16, v32f32]>;
 def VOP_V4I32_I32_I32_V4I32       : VOPProfile <[v4i32,  i32,   i32,   v4i32]>;
 def VOP_V16I32_I32_I32_V16I32     : VOPProfile <[v16i32, i32,   i32,   v16i32]>;
 def VOP_V32I32_I32_I32_V32I32     : VOPProfile <[v32i32, i32,   i32,   v32i32]>;

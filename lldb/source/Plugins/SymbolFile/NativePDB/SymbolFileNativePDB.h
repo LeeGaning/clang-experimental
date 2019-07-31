@@ -68,12 +68,8 @@ public:
 
   // Compile Unit function calls
 
-  uint32_t GetNumCompileUnits() override;
-
   void
   ParseDeclsForContext(lldb_private::CompilerDeclContext decl_ctx) override;
-
-  lldb::CompUnitSP ParseCompileUnitAtIndex(uint32_t index) override;
 
   lldb::LanguageType
   ParseLanguage(lldb_private::CompileUnit &comp_unit) override;
@@ -141,7 +137,8 @@ public:
   size_t FindTypes(const std::vector<CompilerContext> &context, bool append,
                    TypeMap &types) override;
 
-  TypeSystem *GetTypeSystemForLanguage(lldb::LanguageType language) override;
+  llvm::Expected<TypeSystem &>
+  GetTypeSystemForLanguage(lldb::LanguageType language) override;
 
   CompilerDeclContext
   FindNamespace(ConstString name,
@@ -157,6 +154,9 @@ public:
   void DumpClangAST(Stream &s) override;
 
 private:
+  uint32_t CalculateNumCompileUnits() override;
+
+  lldb::CompUnitSP ParseCompileUnitAtIndex(uint32_t index) override;
 
   size_t FindTypesByName(llvm::StringRef name, uint32_t max_matches,
                          TypeMap &types);

@@ -1179,6 +1179,10 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
   case Builtin::BI__builtin_alloca_with_align:
     if (SemaBuiltinAllocaWithAlign(TheCall))
       return ExprError();
+    LLVM_FALLTHROUGH;
+  case Builtin::BI__builtin_alloca:
+    Diag(TheCall->getBeginLoc(), diag::warn_alloca)
+        << TheCall->getDirectCallee();
     break;
   case Builtin::BI__assume:
   case Builtin::BI__builtin_assume:
@@ -3293,6 +3297,8 @@ bool Sema::CheckSystemZBuiltinFunctionCall(unsigned BuiltinID,
   case SystemZ::BI__builtin_s390_vfmaxsb:
   case SystemZ::BI__builtin_s390_vfmindb:
   case SystemZ::BI__builtin_s390_vfmaxdb: i = 2; l = 0; u = 15; break;
+  case SystemZ::BI__builtin_s390_vsld: i = 2; l = 0; u = 7; break;
+  case SystemZ::BI__builtin_s390_vsrd: i = 2; l = 0; u = 7; break;
   }
   return SemaBuiltinConstantArgRange(TheCall, i, l, u);
 }
@@ -11389,7 +11395,7 @@ CheckImplicitConversion(Sema &S, Expr *E, QualType T, SourceLocation CC,
         if (Overflowed) {
           S.DiagRuntimeBehavior(E->getExprLoc(), E,
                                 S.PDiag(diag::warn_impcast_fixed_point_range)
-                                    << Value.toString(/*radix=*/10) << T
+                                    << Value.toString(/*Radix=*/10) << T
                                     << E->getSourceRange()
                                     << clang::SourceRange(CC));
           return;
