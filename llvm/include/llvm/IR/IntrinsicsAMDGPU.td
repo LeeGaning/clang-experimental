@@ -175,6 +175,7 @@ def int_amdgcn_implicit_buffer_ptr :
 
 // Set EXEC to the 64-bit value given.
 // This is always moved to the beginning of the basic block.
+// FIXME: Should be mangled for wave size.
 def int_amdgcn_init_exec : Intrinsic<[],
   [llvm_i64_ty],      // 64-bit literal constant
   [IntrConvergent, ImmArg<0>]>;
@@ -185,7 +186,7 @@ def int_amdgcn_init_exec : Intrinsic<[],
 def int_amdgcn_init_exec_from_input : Intrinsic<[],
   [llvm_i32_ty,       // 32-bit SGPR input
    llvm_i32_ty],      // bit offset of the thread count
-  [IntrConvergent]>;
+  [IntrConvergent, ImmArg<1>]>;
 
 def int_amdgcn_wavefrontsize :
   GCCBuiltin<"__builtin_amdgcn_wavefrontsize">,
@@ -199,12 +200,14 @@ def int_amdgcn_wavefrontsize :
 // The first parameter is s_sendmsg immediate (i16),
 // the second one is copied to m0
 def int_amdgcn_s_sendmsg : GCCBuiltin<"__builtin_amdgcn_s_sendmsg">,
-  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty], [ImmArg<0>, IntrInaccessibleMemOnly]>;
+  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty],
+  [ImmArg<0>, IntrNoMem, IntrHasSideEffects]>;
 def int_amdgcn_s_sendmsghalt : GCCBuiltin<"__builtin_amdgcn_s_sendmsghalt">,
-  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty], [ImmArg<0>, IntrInaccessibleMemOnly]>;
+  Intrinsic <[], [llvm_i32_ty, llvm_i32_ty],
+  [ImmArg<0>, IntrNoMem, IntrHasSideEffects]>;
 
 def int_amdgcn_s_barrier : GCCBuiltin<"__builtin_amdgcn_s_barrier">,
-  Intrinsic<[], [], [IntrConvergent]>;
+  Intrinsic<[], [], [IntrNoMem, IntrHasSideEffects, IntrConvergent]>;
 
 def int_amdgcn_wave_barrier : GCCBuiltin<"__builtin_amdgcn_wave_barrier">,
   Intrinsic<[], [], [IntrConvergent]>;
@@ -835,9 +838,6 @@ defset list<AMDGPUImageDimIntrinsic> AMDGPUImageDimAtomicIntrinsics = {
   defm int_amdgcn_image_atomic_and : AMDGPUImageDimAtomic<"ATOMIC_AND">;
   defm int_amdgcn_image_atomic_or : AMDGPUImageDimAtomic<"ATOMIC_OR">;
   defm int_amdgcn_image_atomic_xor : AMDGPUImageDimAtomic<"ATOMIC_XOR">;
-
-  // TODO: INC/DEC are weird: they seem to have a vdata argument in hardware,
-  //       even though it clearly shouldn't be needed
   defm int_amdgcn_image_atomic_inc : AMDGPUImageDimAtomic<"ATOMIC_INC">;
   defm int_amdgcn_image_atomic_dec : AMDGPUImageDimAtomic<"ATOMIC_DEC">;
 
@@ -961,6 +961,8 @@ def int_amdgcn_raw_buffer_atomic_umax : AMDGPURawBufferAtomic;
 def int_amdgcn_raw_buffer_atomic_and : AMDGPURawBufferAtomic;
 def int_amdgcn_raw_buffer_atomic_or : AMDGPURawBufferAtomic;
 def int_amdgcn_raw_buffer_atomic_xor : AMDGPURawBufferAtomic;
+def int_amdgcn_raw_buffer_atomic_inc : AMDGPURawBufferAtomic;
+def int_amdgcn_raw_buffer_atomic_dec : AMDGPURawBufferAtomic;
 def int_amdgcn_raw_buffer_atomic_cmpswap : Intrinsic<
   [llvm_anyint_ty],
   [LLVMMatchType<0>,  // src(VGPR)
@@ -992,6 +994,8 @@ def int_amdgcn_struct_buffer_atomic_umax : AMDGPUStructBufferAtomic;
 def int_amdgcn_struct_buffer_atomic_and : AMDGPUStructBufferAtomic;
 def int_amdgcn_struct_buffer_atomic_or : AMDGPUStructBufferAtomic;
 def int_amdgcn_struct_buffer_atomic_xor : AMDGPUStructBufferAtomic;
+def int_amdgcn_struct_buffer_atomic_inc : AMDGPUStructBufferAtomic;
+def int_amdgcn_struct_buffer_atomic_dec : AMDGPUStructBufferAtomic;
 def int_amdgcn_struct_buffer_atomic_cmpswap : Intrinsic<
   [llvm_anyint_ty],
   [LLVMMatchType<0>,  // src(VGPR)
@@ -1465,6 +1469,18 @@ def int_amdgcn_set_inactive :
             [LLVMMatchType<0>, // value to be copied
              LLVMMatchType<0>], // value for the inactive lanes to take
             [IntrNoMem, IntrConvergent]>;
+
+// Return if the given flat pointer points to a local memory address.
+def int_amdgcn_is_shared : GCCBuiltin<"__builtin_amdgcn_is_shared">,
+  Intrinsic<[llvm_i1_ty], [llvm_ptr_ty],
+  [IntrNoMem, IntrSpeculatable, NoCapture<0>]
+>;
+
+// Return if the given flat pointer points to a prvate memory address.
+def int_amdgcn_is_private : GCCBuiltin<"__builtin_amdgcn_is_private">,
+  Intrinsic<[llvm_i1_ty], [llvm_ptr_ty],
+  [IntrNoMem, IntrSpeculatable, NoCapture<0>]
+>;
 
 //===----------------------------------------------------------------------===//
 // CI+ Intrinsics

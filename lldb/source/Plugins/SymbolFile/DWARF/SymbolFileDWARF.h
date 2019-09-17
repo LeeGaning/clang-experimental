@@ -79,13 +79,13 @@ public:
   static const char *GetPluginDescriptionStatic();
 
   static lldb_private::SymbolFile *
-  CreateInstance(lldb_private::ObjectFile *obj_file);
+  CreateInstance(lldb::ObjectFileSP objfile_sp);
 
   static lldb_private::FileSpecList GetSymlinkPaths();
 
   // Constructors and Destructors
 
-  SymbolFileDWARF(lldb_private::ObjectFile *ofile,
+  SymbolFileDWARF(lldb::ObjectFileSP objfile_sp,
                   lldb_private::SectionList *dwo_section_list);
 
   ~SymbolFileDWARF() override;
@@ -184,8 +184,9 @@ public:
             llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
             lldb_private::TypeMap &types) override;
 
-  size_t FindTypes(const std::vector<lldb_private::CompilerContext> &context,
-                   bool append, lldb_private::TypeMap &types) override;
+  size_t FindTypes(llvm::ArrayRef<lldb_private::CompilerContext> pattern,
+                   lldb_private::LanguageSet languages, bool append,
+                   lldb_private::TypeMap &types) override;
 
   size_t GetTypes(lldb_private::SymbolContextScope *sc_scope,
                   lldb::TypeClass type_mask,

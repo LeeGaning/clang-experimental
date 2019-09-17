@@ -55,10 +55,10 @@ public:
 
   static const char *GetPluginDescriptionStatic();
 
-  static SymbolFile *CreateInstance(ObjectFile *obj_file);
+  static SymbolFile *CreateInstance(lldb::ObjectFileSP objfile_sp);
 
   // Constructors and Destructors
-  SymbolFileNativePDB(ObjectFile *ofile);
+  SymbolFileNativePDB(lldb::ObjectFileSP objfile_sp);
 
   ~SymbolFileNativePDB() override;
 
@@ -134,8 +134,8 @@ public:
                      llvm::DenseSet<SymbolFile *> &searched_symbol_files,
                      TypeMap &types) override;
 
-  size_t FindTypes(const std::vector<CompilerContext> &context, bool append,
-                   TypeMap &types) override;
+  size_t FindTypes(llvm::ArrayRef<CompilerContext> pattern,
+                   LanguageSet languages, bool append, TypeMap &types) override;
 
   llvm::Expected<TypeSystem &>
   GetTypeSystemForLanguage(lldb::LanguageType language) override;

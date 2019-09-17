@@ -1,6 +1,6 @@
 ; RUN: opt -S -functionattrs -enable-nonnull-arg-prop %s | FileCheck %s --check-prefixes=BOTH,FNATTR
 ; RUN: opt -S -passes=function-attrs -enable-nonnull-arg-prop %s | FileCheck %s --check-prefixes=BOTH,FNATTR
-; RUN: opt -attributor --attributor-disable=false -S < %s | FileCheck %s --check-prefixes=BOTH,ATTRIBUTOR
+; RUN: opt -attributor --attributor-disable=false -attributor-max-iterations-verify -attributor-max-iterations=8 -S < %s | FileCheck %s --check-prefixes=BOTH,ATTRIBUTOR
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 
@@ -21,16 +21,20 @@ define i8* @test2(i8* nonnull %p) {
 
 ; Given an SCC where one of the functions can not be marked nonnull,
 ; can we still mark the other one which is trivially nonnull
-define i8* @scc_binder() {
+define i8* @scc_binder(i1 %c) {
 ; FNATTR: define i8* @scc_binder
 ; ATTRIBUTOR: define noalias i8* @scc_binder
-  call i8* @test3()
+  br i1 %c, label %rec, label %end
+rec:
+  call i8* @test3(i1 %c)
+  br label %end
+end:
   ret i8* null
 }
 
-define i8* @test3() {
+define i8* @test3(i1 %c) {
 ; BOTH: define nonnull i8* @test3
-  call i8* @scc_binder()
+  call i8* @scc_binder(i1 %c)
   %ret = call i8* @ret_nonnull()
   ret i8* %ret
 }
@@ -54,17 +58,21 @@ define i8* @test4() {
 
 ; Given a mutual recursive set of functions which *can* return null
 ; make sure we haven't marked them as nonnull.
-define i8* @test5_helper() {
+define i8* @test5_helper(i1 %c) {
 ; FNATTR: define noalias i8* @test5_helper
 ; ATTRIBUTOR: define noalias i8* @test5_helper
-  %ret = call i8* @test5()
+  br i1 %c, label %rec, label %end
+rec:
+  %ret = call i8* @test5(i1 %c)
+  br label %end
+end:
   ret i8* null
 }
 
-define i8* @test5() {
+define i8* @test5(i1 %c) {
 ; FNATTR: define noalias i8* @test5
 ; ATTRIBUTOR: define noalias i8* @test5
-  %ret = call i8* @test5_helper()
+  %ret = call i8* @test5_helper(i1 %c)
   ret i8* %ret
 }
 
@@ -151,7 +159,7 @@ define void @test13_helper() {
   ret void
 }
 define internal void @test13(i8* %a, i8* %b, i8* %c) {
-; ATTRIBUTOR: define internal void @test13(i8* nonnull %a, i8* %b, i8* %c) 
+; ATTRIBUTOR: define internal void @test13(i8* nocapture nonnull %a, i8* nocapture %b, i8* nocapture %c) 
   ret void
 }
 
@@ -190,7 +198,7 @@ bb4:                                              ; preds = %bb1
 
 bb6:                                              ; preds = %bb1
 ; FIXME: missing nonnull. It should be @f2(i32* nonnull %arg)
-; ATTRIBUTOR: %tmp7 = tail call i32* @f2(i32* %arg)
+; ATTRIBUTOR: %tmp7 = tail call nonnull i32* @f2(i32* %arg)
   %tmp7 = tail call i32* @f2(i32* %arg)
   ret i32* %tmp7
 
@@ -205,7 +213,7 @@ define internal i32* @f2(i32* %arg) {
 bb:
 
 ; FIXME: missing nonnull. It should be @f1(i32* nonnull %arg) 
-; ATTRIBUTOR:   %tmp = tail call i32* @f1(i32* %arg)
+; ATTRIBUTOR:   %tmp = tail call nonnull i32* @f1(i32* %arg)
   %tmp = tail call i32* @f1(i32* %arg)
   ret i32* %tmp
 }
@@ -394,7 +402,7 @@ declare i32 @esfp(...)
 define i1 @parent8(i8* %a, i8* %bogus1, i8* %b) personality i8* bitcast (i32 (...)* @esfp to i8*){
 ; FNATTR-LABEL: @parent8(i8* nonnull %a, i8* nocapture readnone %bogus1, i8* nonnull %b)
 ; FIXME : missing "nonnull", it should be @parent8(i8* nonnull %a, i8* %bogus1, i8* nonnull %b)
-; ATTRIBUTOR-LABEL: @parent8(i8* %a, i8* %bogus1, i8* %b)
+; ATTRIBUTOR-LABEL: @parent8(i8* %a, i8* nocapture %bogus1, i8* %b)
 ; BOTH-NEXT:  entry:
 ; FNATTR-NEXT:    invoke void @use2nonnull(i8* %a, i8* %b)
 ; ATTRIBUTOR-NEXT:    invoke void @use2nonnull(i8* nonnull %a, i8* nonnull %b)
@@ -448,6 +456,18 @@ define internal i32* @g2() {
 define  i32* @g1() {
  %c = call i32* @g2()
   ret i32* %c
+}
+
+; ATTRIBUTOR: define internal void @called_by_weak(i32* nocapture nonnull %a)
+define internal void @called_by_weak(i32* %a) {
+  ret void
+}
+
+; Check we do not annotate the function interface of this weak function.
+; ATTRIBUTOR: define weak_odr void @weak_caller(i32* nonnull %a)
+define weak_odr void @weak_caller(i32* nonnull %a) {
+  call void @called_by_weak(i32* %a)
+  ret void
 }
 
 attributes #0 = { "null-pointer-is-valid"="true" }

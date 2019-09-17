@@ -561,7 +561,8 @@ TEST_F(FormatTest, FormatLoopsWithoutCompoundStatement) {
 TEST_F(FormatTest, FormatShortBracedStatements) {
   FormatStyle AllowSimpleBracedStatements = getLLVMStyle();
   AllowSimpleBracedStatements.ColumnLimit = 40;
-  AllowSimpleBracedStatements.AllowShortBlocksOnASingleLine = true;
+  AllowSimpleBracedStatements.AllowShortBlocksOnASingleLine =
+      FormatStyle::SBS_Always;
 
   AllowSimpleBracedStatements.AllowShortIfStatementsOnASingleLine =
       FormatStyle::SIS_WithoutElse;
@@ -714,7 +715,7 @@ TEST_F(FormatTest, FormatShortBracedStatements) {
 
 TEST_F(FormatTest, ShortBlocksInMacrosDontMergeWithCodeAfterMacro) {
   FormatStyle Style = getLLVMStyleWithColumns(60);
-  Style.AllowShortBlocksOnASingleLine = true;
+  Style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Always;
   Style.AllowShortIfStatementsOnASingleLine = FormatStyle::SIS_WithoutElse;
   Style.BreakBeforeBraces = FormatStyle::BS_Allman;
   EXPECT_EQ("#define A                                                  \\\n"
@@ -1163,7 +1164,7 @@ TEST_F(FormatTest, FormatsSwitchStatement) {
 
   FormatStyle Style = getLLVMStyle();
   Style.IndentCaseLabels = true;
-  Style.AllowShortBlocksOnASingleLine = false;
+  Style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Never;
   Style.BreakBeforeBraces = FormatStyle::BS_Custom;
   Style.BraceWrapping.AfterCaseLabel = true;
   Style.BraceWrapping.AfterControlStatement = true;
@@ -1402,6 +1403,30 @@ TEST_F(FormatTest, FormatsLabels) {
                "test_label:\n"
                "  some_other_code();\n"
                "}");
+  verifyFormat("{\n"
+               "  some_code();\n"
+               "test_label:;\n"
+               "  int i = 0;\n"
+               "}");
+  FormatStyle Style = getLLVMStyle();
+  Style.IndentGotoLabels = false;
+  verifyFormat("void f() {\n"
+               "  some_code();\n"
+               "test_label:\n"
+               "  some_other_code();\n"
+               "  {\n"
+               "    some_more_code();\n"
+               "another_label:\n"
+               "    some_more_code();\n"
+               "  }\n"
+               "}",
+               Style);
+  verifyFormat("{\n"
+               "  some_code();\n"
+               "test_label:\n"
+               "  some_other_code();\n"
+               "}",
+               Style);
   verifyFormat("{\n"
                "  some_code();\n"
                "test_label:;\n"
@@ -3087,6 +3112,15 @@ TEST_F(FormatTest, IndentPreprocessorDirectives) {
                "#endif\n"
                "#endif\n",
                Style);
+  // Don't crash if there is an #elif directive without a condition.
+  verifyFormat("#if 1\n"
+               "int x;\n"
+               "#elif\n"
+               "int y;\n"
+               "#else\n"
+               "int z;\n"
+               "#endif",
+               Style);
   // FIXME: This doesn't handle the case where there's code between the
   // #ifndef and #define but all other conditions hold. This is because when
   // the #define line is parsed, UnwrappedLineParser::Lines doesn't hold the
@@ -3683,6 +3717,11 @@ TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
   EXPECT_EQ("{}", format("{}"));
   verifyFormat("enum E {};");
   verifyFormat("enum E {}");
+  FormatStyle Style = getLLVMStyle();
+  Style.SpaceInEmptyBlock = true;
+  EXPECT_EQ("void f() { }", format("void f() {}", Style));
+  Style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  EXPECT_EQ("while (true) { }", format("while (true) {}", Style));
 }
 
 TEST_F(FormatTest, FormatBeginBlockEndMacros) {
@@ -6603,7 +6642,17 @@ TEST_F(FormatTest, UnderstandsTemplateParameters) {
   EXPECT_EQ("auto x = [] { A<A<A<A>>> a; };",
             format("auto x=[]{A<A<A<A> >> a;};", getGoogleStyle()));
 
-  verifyFormat("A<A>> a;", getChromiumStyle(FormatStyle::LK_Cpp));
+  verifyFormat("A<A<int>> a;", getChromiumStyle(FormatStyle::LK_Cpp));
+
+  // template closer followed by a token that starts with > or =
+  verifyFormat("bool b = a<1> > 1;");
+  verifyFormat("bool b = a<1> >= 1;");
+  verifyFormat("int i = a<1> >> 1;");
+  FormatStyle Style = getLLVMStyle();
+  Style.SpaceBeforeAssignmentOperators = false;
+  verifyFormat("bool b= a<1> == 1;", Style);
+  verifyFormat("a<int> = 1;", Style);
+  verifyFormat("a<int> >>= 1;", Style);
 
   verifyFormat("test >> a >> b;");
   verifyFormat("test << a >> b;");
@@ -7809,6 +7858,16 @@ TEST_F(FormatTest, LayoutCxx11BraceInitializers) {
       "    ffffff, ggggg,  hhhhhh, iiiiii, jjjjjj, kkkkkk,\n"
       "};",
       NoBinPacking);
+
+  NoBinPacking.AlignAfterOpenBracket = FormatStyle::BAS_AlwaysBreak;
+  EXPECT_EQ("static uint8 CddDp83848Reg[] = {\n"
+            "    CDDDP83848_BMCR_REGISTER,\n"
+            "    CDDDP83848_BMSR_REGISTER,\n"
+            "    CDDDP83848_RBR_REGISTER};",
+            format("static uint8 CddDp83848Reg[] = {CDDDP83848_BMCR_REGISTER,\n"
+                   "                                CDDDP83848_BMSR_REGISTER,\n"
+                   "                                CDDDP83848_RBR_REGISTER};",
+                   NoBinPacking));
 
   // FIXME: The alignment of these trailing comments might be bad. Then again,
   // this might be utterly useless in real code.
@@ -11086,6 +11145,9 @@ TEST_F(FormatTest, AllmanBraceBreaking) {
                "{\n"
                "  int x;\n"
                "};\n"
+               "union C\n"
+               "{\n"
+               "};\n"
                "} // namespace a",
                AllmanBraceStyle);
 
@@ -11728,7 +11790,6 @@ TEST_F(FormatTest, ParsesConfigurationBools) {
   CHECK_PARSE_BOOL(AllowAllArgumentsOnNextLine);
   CHECK_PARSE_BOOL(AllowAllConstructorInitializersOnNextLine);
   CHECK_PARSE_BOOL(AllowAllParametersOfDeclarationOnNextLine);
-  CHECK_PARSE_BOOL(AllowShortBlocksOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortCaseLabelsOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortLoopsOnASingleLine);
   CHECK_PARSE_BOOL(BinPackArguments);
@@ -11742,6 +11803,7 @@ TEST_F(FormatTest, ParsesConfigurationBools) {
   CHECK_PARSE_BOOL_FIELD(DerivePointerAlignment, "DerivePointerBinding");
   CHECK_PARSE_BOOL(DisableFormat);
   CHECK_PARSE_BOOL(IndentCaseLabels);
+  CHECK_PARSE_BOOL(IndentGotoLabels);
   CHECK_PARSE_BOOL(IndentWrappedFunctionNames);
   CHECK_PARSE_BOOL(KeepEmptyLinesAtTheStartOfBlocks);
   CHECK_PARSE_BOOL(ObjCSpaceAfterProperty);
@@ -11753,6 +11815,7 @@ TEST_F(FormatTest, ParsesConfigurationBools) {
   CHECK_PARSE_BOOL(SpacesInParentheses);
   CHECK_PARSE_BOOL(SpacesInSquareBrackets);
   CHECK_PARSE_BOOL(SpacesInAngles);
+  CHECK_PARSE_BOOL(SpaceInEmptyBlock);
   CHECK_PARSE_BOOL(SpaceInEmptyParentheses);
   CHECK_PARSE_BOOL(SpacesInContainerLiterals);
   CHECK_PARSE_BOOL(SpacesInCStyleCastParentheses);
@@ -11901,6 +11964,19 @@ TEST_F(FormatTest, ParsesConfiguration) {
   // For backward compatibility:
   CHECK_PARSE("UseTab: false", UseTab, FormatStyle::UT_Never);
   CHECK_PARSE("UseTab: true", UseTab, FormatStyle::UT_Always);
+
+  Style.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Empty;
+  CHECK_PARSE("AllowShortBlocksOnASingleLine: Never",
+              AllowShortBlocksOnASingleLine, FormatStyle::SBS_Never);
+  CHECK_PARSE("AllowShortBlocksOnASingleLine: Empty",
+              AllowShortBlocksOnASingleLine, FormatStyle::SBS_Empty);
+  CHECK_PARSE("AllowShortBlocksOnASingleLine: Always",
+              AllowShortBlocksOnASingleLine, FormatStyle::SBS_Always);
+  // For backward compatibility:
+  CHECK_PARSE("AllowShortBlocksOnASingleLine: false",
+              AllowShortBlocksOnASingleLine, FormatStyle::SBS_Never);
+  CHECK_PARSE("AllowShortBlocksOnASingleLine: true",
+              AllowShortBlocksOnASingleLine, FormatStyle::SBS_Always);
 
   Style.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Inline;
   CHECK_PARSE("AllowShortFunctionsOnASingleLine: None",
@@ -12509,6 +12585,14 @@ TEST_F(FormatTest, FormatsWithWebKitStyle) {
   // Allow functions on a single line.
   verifyFormat("void f() { return; }", Style);
 
+  // Allow empty blocks on a single line and insert a space in empty blocks.
+  EXPECT_EQ("void f() { }", format("void f() {}", Style));
+  EXPECT_EQ("while (true) { }", format("while (true) {}", Style));
+  // However, don't merge non-empty short loops.
+  EXPECT_EQ("while (true) {\n"
+            "    continue;\n"
+            "}", format("while (true) { continue; }", Style));
+
   // Constructor initializers are formatted one per line with the "," on the
   // new line.
   verifyFormat("Constructor()\n"
@@ -12839,6 +12923,10 @@ TEST_F(FormatTest, FormatsLambdas) {
                "  return 1; //\n"
                "};");
 
+  // Lambdas with explicit template argument lists.
+  verifyFormat(
+      "auto L = []<template <typename> class T, class U>(T<U> &&a) {};\n");
+
   // Multiple lambdas in the same parentheses change indentation rules. These
   // lambdas are forced to start on new lines.
   verifyFormat("SomeFunction(\n"
@@ -12856,8 +12944,8 @@ TEST_F(FormatTest, FormatsLambdas) {
                "    },\n"
                "    1);\n");
 
-  // A multi-line lambda passed as arg1 forces arg0 to be pushed out, just like the arg0
-  // case above.
+  // A multi-line lambda passed as arg1 forces arg0 to be pushed out, just like
+  // the arg0 case above.
   auto Style = getGoogleStyle();
   Style.BinPackArguments = false;
   verifyFormat("SomeFunction(\n"
@@ -13015,7 +13103,7 @@ TEST_F(FormatTest, EmptyLinesInLambdas) {
 
 TEST_F(FormatTest, FormatsBlocks) {
   FormatStyle ShortBlocks = getLLVMStyle();
-  ShortBlocks.AllowShortBlocksOnASingleLine = true;
+  ShortBlocks.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Always;
   verifyFormat("int (^Block)(int, int);", ShortBlocks);
   verifyFormat("int (^Block1)(int, int) = ^(int i, int j)", ShortBlocks);
   verifyFormat("void (^block)(int) = ^(id test) { int i; };", ShortBlocks);
@@ -13173,10 +13261,10 @@ TEST_F(FormatTest, FormatsBlocksWithZeroColumnWidth) {
                "};",
                ZeroColumn);
 
-  ZeroColumn.AllowShortBlocksOnASingleLine = true;
+  ZeroColumn.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Always;
   EXPECT_EQ("void (^largeBlock)(void) = ^{ int i; };",
             format("void   (^largeBlock)(void) = ^{ int   i; };", ZeroColumn));
-  ZeroColumn.AllowShortBlocksOnASingleLine = false;
+  ZeroColumn.AllowShortBlocksOnASingleLine = FormatStyle::SBS_Never;
   EXPECT_EQ("void (^largeBlock)(void) = ^{\n"
             "  int i;\n"
             "};",

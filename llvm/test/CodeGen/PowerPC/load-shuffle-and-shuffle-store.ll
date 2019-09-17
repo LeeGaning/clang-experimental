@@ -70,7 +70,11 @@ define <2 x i64> @load_swap01(<2 x i64>* %vp1, <2 x i64>* %vp2) {
 define <4 x i32> @load_swap10(<4 x i32>* %vp1, <4 x i32>* %vp2) {
 ; CHECK-P8-LABEL: load_swap10:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    lxvw4x v2, 0, r3
+; CHECK-P8-NEXT:    addis r4, r2, .LCPI2_0@toc@ha
+; CHECK-P8-NEXT:    lvx v3, 0, r3
+; CHECK-P8-NEXT:    addi r4, r4, .LCPI2_0@toc@l
+; CHECK-P8-NEXT:    lvx v2, 0, r4
+; CHECK-P8-NEXT:    vperm v2, v3, v3, v2
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: load_swap10:
@@ -104,7 +108,11 @@ define <4 x i32> @load_swap10(<4 x i32>* %vp1, <4 x i32>* %vp2) {
 define <4 x i32> @load_swap11(<4 x i32>* %vp1, <4 x i32>* %vp2) {
 ; CHECK-P8-LABEL: load_swap11:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    lxvw4x v2, 0, r4
+; CHECK-P8-NEXT:    addis r3, r2, .LCPI3_0@toc@ha
+; CHECK-P8-NEXT:    lvx v3, 0, r4
+; CHECK-P8-NEXT:    addi r3, r3, .LCPI3_0@toc@l
+; CHECK-P8-NEXT:    lvx v2, 0, r3
+; CHECK-P8-NEXT:    vperm v2, v3, v3, v2
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: load_swap11:
@@ -312,7 +320,11 @@ define <2 x double> @load_swap40(<2 x double>* %vp1, <2 x double>* %vp2) {
 define <4 x float> @load_swap50(<4 x float>* %vp1, <4 x float>* %vp2) {
 ; CHECK-P8-LABEL: load_swap50:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    lxvw4x v2, 0, r3
+; CHECK-P8-NEXT:    addis r4, r2, .LCPI9_0@toc@ha
+; CHECK-P8-NEXT:    lvx v3, 0, r3
+; CHECK-P8-NEXT:    addi r4, r4, .LCPI9_0@toc@l
+; CHECK-P8-NEXT:    lvx v2, 0, r4
+; CHECK-P8-NEXT:    vperm v2, v3, v3, v2
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: load_swap50:
@@ -346,7 +358,11 @@ define <4 x float> @load_swap50(<4 x float>* %vp1, <4 x float>* %vp2) {
 define <4 x float> @load_swap51(<4 x float>* %vp1, <4 x float>* %vp2) {
 ; CHECK-P8-LABEL: load_swap51:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    lxvw4x v2, 0, r4
+; CHECK-P8-NEXT:    addis r3, r2, .LCPI10_0@toc@ha
+; CHECK-P8-NEXT:    lvx v3, 0, r4
+; CHECK-P8-NEXT:    addi r3, r3, .LCPI10_0@toc@l
+; CHECK-P8-NEXT:    lvx v2, 0, r3
+; CHECK-P8-NEXT:    vperm v2, v3, v3, v2
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: load_swap51:
@@ -434,7 +450,11 @@ define void @swap_store01(<2 x i64> %v1, <2 x i64> %v2, <2 x i64>* %vp) {
 define void @swap_store10(<4 x i32> %v1, <4 x i32> %v2, <4 x i32>* %vp) {
 ; CHECK-P8-LABEL: swap_store10:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    stxvw4x v2, 0, r7
+; CHECK-P8-NEXT:    addis r3, r2, .LCPI13_0@toc@ha
+; CHECK-P8-NEXT:    addi r3, r3, .LCPI13_0@toc@l
+; CHECK-P8-NEXT:    lvx v3, 0, r3
+; CHECK-P8-NEXT:    vperm v2, v2, v2, v3
+; CHECK-P8-NEXT:    stvx v2, 0, r7
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: swap_store10:
@@ -467,7 +487,11 @@ define void @swap_store10(<4 x i32> %v1, <4 x i32> %v2, <4 x i32>* %vp) {
 define void @swap_store11(<4 x i32> %v1, <4 x i32> %v2, <4 x i32>* %vp) {
 ; CHECK-P8-LABEL: swap_store11:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    stxvw4x v3, 0, r7
+; CHECK-P8-NEXT:    addis r3, r2, .LCPI14_0@toc@ha
+; CHECK-P8-NEXT:    addi r3, r3, .LCPI14_0@toc@l
+; CHECK-P8-NEXT:    lvx v2, 0, r3
+; CHECK-P8-NEXT:    vperm v2, v3, v3, v2
+; CHECK-P8-NEXT:    stvx v2, 0, r7
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: swap_store11:
@@ -696,7 +720,11 @@ define void @swap_store41(<2 x double> %v1, <2 x double> %v2, <2 x double>* %vp)
 define void @swap_store50(<4 x float> %v1, <4 x float> %v2, <4 x float>* %vp) {
 ; CHECK-P8-LABEL: swap_store50:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    stxvw4x v2, 0, r7
+; CHECK-P8-NEXT:    addis r3, r2, .LCPI21_0@toc@ha
+; CHECK-P8-NEXT:    addi r3, r3, .LCPI21_0@toc@l
+; CHECK-P8-NEXT:    lvx v3, 0, r3
+; CHECK-P8-NEXT:    vperm v2, v2, v2, v3
+; CHECK-P8-NEXT:    stvx v2, 0, r7
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: swap_store50:
@@ -729,7 +757,11 @@ define void @swap_store50(<4 x float> %v1, <4 x float> %v2, <4 x float>* %vp) {
 define void @swap_store51(<4 x float> %v1, <4 x float> %v2, <4 x float>* %vp) {
 ; CHECK-P8-LABEL: swap_store51:
 ; CHECK-P8:       # %bb.0:
-; CHECK-P8-NEXT:    stxvw4x v3, 0, r7
+; CHECK-P8-NEXT:    addis r3, r2, .LCPI22_0@toc@ha
+; CHECK-P8-NEXT:    addi r3, r3, .LCPI22_0@toc@l
+; CHECK-P8-NEXT:    lvx v2, 0, r3
+; CHECK-P8-NEXT:    vperm v2, v3, v3, v2
+; CHECK-P8-NEXT:    stvx v2, 0, r7
 ; CHECK-P8-NEXT:    blr
 ;
 ; CHECK-P9-LABEL: swap_store51:

@@ -26,6 +26,8 @@
 using namespace lldb;
 using namespace lldb_private;
 
+char ObjectFile::ID;
+
 ObjectFileSP
 ObjectFile::FindPlugin(const lldb::ModuleSP &module_sp, const FileSpec *file,
                        lldb::offset_t file_offset, lldb::offset_t file_size,
@@ -573,18 +575,15 @@ bool ObjectFile::SplitArchivePathWithObject(const char *path_with_object,
                                             FileSpec &archive_file,
                                             ConstString &archive_object,
                                             bool must_exist) {
+  llvm::SmallVector<llvm::StringRef, 3> matches;
   RegularExpression g_object_regex(llvm::StringRef("(.*)\\(([^\\)]+)\\)$"));
-  RegularExpression::Match regex_match(2);
   if (g_object_regex.Execute(llvm::StringRef::withNullAsEmpty(path_with_object),
-                             &regex_match)) {
-    std::string path;
-    std::string obj;
-    if (regex_match.GetMatchAtIndex(path_with_object, 1, path) &&
-        regex_match.GetMatchAtIndex(path_with_object, 2, obj)) {
-      archive_file.SetFile(path, FileSpec::Style::native);
-      archive_object.SetCString(obj.c_str());
-      return !(must_exist && !FileSystem::Instance().Exists(archive_file));
-    }
+                             &matches)) {
+    std::string path = matches[1].str();
+    std::string obj = matches[2].str();
+    archive_file.SetFile(path, FileSpec::Style::native);
+    archive_object.SetCString(obj.c_str());
+    return !(must_exist && !FileSystem::Instance().Exists(archive_file));
   }
   return false;
 }

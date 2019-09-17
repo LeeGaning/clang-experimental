@@ -35,11 +35,11 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_SELECTION_H
 #include "clang/AST/ASTTypeTraits.h"
 #include "clang/AST/PrettyPrinter.h"
+#include "clang/Tooling/Syntax/Tokens.h"
 #include "llvm/ADT/SmallVector.h"
 
 namespace clang {
 namespace clangd {
-class ParsedAST;
 
 // A selection can partially or completely cover several AST nodes.
 // The SelectionTree contains nodes that are covered, and their parents.
@@ -56,8 +56,9 @@ class ParsedAST;
 //
 // SelectionTree tries to behave sensibly in the presence of macros, but does
 // not model any preprocessor concepts: the output is a subset of the AST.
-// Currently comments, directives etc are treated as part of the lexically
-// containing AST node, (though we may want to change this in future).
+//
+// Comments, directives and whitespace are completely ignored.
+// Semicolons are also ignored, as the AST generally does not model them well.
 //
 // The SelectionTree owns the Node structures, but the ASTNode attributes
 // point back into the AST it was constructed with.
@@ -66,11 +67,13 @@ public:
   // Creates a selection tree at the given byte offset in the main file.
   // This is approximately equivalent to a range of one character.
   // (Usually, the character to the right of Offset, sometimes to the left).
-  SelectionTree(ASTContext &AST, unsigned Offset);
+  SelectionTree(ASTContext &AST, const syntax::TokenBuffer &Tokens,
+                unsigned Offset);
   // Creates a selection tree for the given range in the main file.
   // The range includes bytes [Start, End).
   // If Start == End, uses the same heuristics as SelectionTree(AST, Start).
-  SelectionTree(ASTContext &AST, unsigned Start, unsigned End);
+  SelectionTree(ASTContext &AST, const syntax::TokenBuffer &Tokens,
+                unsigned Start, unsigned End);
 
   // Describes to what extent an AST node is covered by the selection.
   enum Selection {
@@ -106,6 +109,9 @@ public:
     // If this node is a wrapper with no syntax (e.g. implicit cast), return
     // its contents. (If multiple wrappers are present, unwraps all of them).
     const Node& ignoreImplicit() const;
+    // If this node is inside a wrapper with no syntax (e.g. implicit cast),
+    // return that wrapper. (If multiple are present, unwraps all of them).
+    const Node& outerImplicit() const;
   };
   // The most specific common ancestor of all the selected nodes.
   // Returns nullptr if the common ancestor is the root.

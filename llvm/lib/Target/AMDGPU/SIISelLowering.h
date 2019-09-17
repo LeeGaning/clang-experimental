@@ -94,6 +94,9 @@ private:
                               SelectionDAG &DAG, ArrayRef<SDValue> Ops,
                               bool IsIntrinsic = false) const;
 
+  SDValue lowerIntrinsicLoad(MemSDNode *M, bool IsFormat, SelectionDAG &DAG,
+                             ArrayRef<SDValue> Ops) const;
+
   // Call DAG.getMemIntrinsicNode for a load, but first widen a dwordx3 type to
   // dwordx4 if on SI.
   SDValue getMemIntrinsicNode(unsigned Opcode, const SDLoc &DL, SDVTList VTList,
@@ -234,6 +237,11 @@ public:
 
   bool canMergeStoresTo(unsigned AS, EVT MemVT,
                         const SelectionDAG &DAG) const override;
+
+  bool allowsMisalignedMemoryAccessesImpl(
+      unsigned Size, unsigned AS, unsigned Align,
+      MachineMemOperand::Flags Flags = MachineMemOperand::MONone,
+      bool *IsFast = nullptr) const;
 
   bool allowsMisalignedMemoryAccesses(
       EVT VT, unsigned AS, unsigned Align,
@@ -376,8 +384,7 @@ public:
                                     unsigned Depth = 0) const override;
   AtomicExpansionKind shouldExpandAtomicRMWInIR(AtomicRMWInst *) const override;
 
-  unsigned getPrefLoopAlignment(MachineLoop *ML) const override;
-
+  llvm::Align getPrefLoopAlignment(MachineLoop *ML) const override;
 
   void allocateHSAUserSGPRs(CCState &CCInfo,
                             MachineFunction &MF,

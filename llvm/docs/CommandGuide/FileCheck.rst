@@ -527,7 +527,10 @@ Because regular expressions are enclosed with double braces, they are
 visually distinct, and you don't need to use escape characters within the double
 braces like you would in C.  In the rare case that you want to match double
 braces explicitly from the input, you can use something ugly like
-``{{[{][{]}}`` as your pattern.
+``{{[}][}]}}`` as your pattern.  Or if you are using the repetition count
+syntax, for example ``[[:xdigit:]]{8}`` to match exactly 8 hex digits, you
+would need to add parentheses like this ``{{([[:xdigit:]]{8})}}`` to avoid
+confusion with FileCheck's closing double-brace.
 
 FileCheck String Substitution Blocks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -645,7 +648,7 @@ The ``--enable-var-scope`` option has the same effect on numeric variables as
 on string variables.
 
 Important note: In its current implementation, an expression cannot use a
-numeric variable with a non-empty expression defined on the same line.
+numeric variable defined earlier in the same CHECK directive.
 
 FileCheck Pseudo Numeric Variables
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

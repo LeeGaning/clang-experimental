@@ -373,16 +373,6 @@ Instruction *InstCombiner::visitFMul(BinaryOperator &I) {
   if (match(Op0, m_FNeg(m_Value(X))) && match(Op1, m_Constant(C)))
     return BinaryOperator::CreateFMulFMF(X, ConstantExpr::getFNeg(C), &I);
 
-  // Sink negation: -X * Y --> -(X * Y)
-  // But don't transform constant expressions because there's an inverse fold.
-  if (match(Op0, m_OneUse(m_FNeg(m_Value(X)))) && !isa<ConstantExpr>(Op0))
-    return BinaryOperator::CreateFNegFMF(Builder.CreateFMulFMF(X, Op1, &I), &I);
-
-  // Sink negation: Y * -X --> -(X * Y)
-  // But don't transform constant expressions because there's an inverse fold.
-  if (match(Op1, m_OneUse(m_FNeg(m_Value(X)))) && !isa<ConstantExpr>(Op1))
-    return BinaryOperator::CreateFNegFMF(Builder.CreateFMulFMF(X, Op0, &I), &I);
-
   // fabs(X) * fabs(X) -> X * X
   if (Op0 == Op1 && match(Op0, m_Intrinsic<Intrinsic::fabs>(m_Value(X))))
     return BinaryOperator::CreateFMulFMF(X, X, &I);
@@ -1211,8 +1201,8 @@ Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
         !IsTan && match(Op0, m_Intrinsic<Intrinsic::cos>(m_Value(X))) &&
                   match(Op1, m_Intrinsic<Intrinsic::sin>(m_Specific(X)));
 
-    if ((IsTan || IsCot) && hasUnaryFloatFn(&TLI, I.getType(), LibFunc_tan,
-                                            LibFunc_tanf, LibFunc_tanl)) {
+    if ((IsTan || IsCot) &&
+        hasFloatFn(&TLI, I.getType(), LibFunc_tan, LibFunc_tanf, LibFunc_tanl)) {
       IRBuilder<> B(&I);
       IRBuilder<>::FastMathFlagGuard FMFGuard(B);
       B.setFastMathFlags(I.getFastMathFlags());
@@ -1234,16 +1224,6 @@ Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
     return &I;
   }
 
-  // Sink negation: -X / Y --> -(X / Y)
-  // But don't transform constant expressions because there's an inverse fold.
-  if (match(Op0, m_OneUse(m_FNeg(m_Value(X)))) && !isa<ConstantExpr>(Op0))
-    return BinaryOperator::CreateFNegFMF(Builder.CreateFDivFMF(X, Op1, &I), &I);
-
-  // Sink negation: Y / -X --> -(Y / X)
-  // But don't transform constant expressions because there's an inverse fold.
-  if (match(Op1, m_OneUse(m_FNeg(m_Value(X)))) && !isa<ConstantExpr>(Op1))
-    return BinaryOperator::CreateFNegFMF(Builder.CreateFDivFMF(Op0, X, &I), &I);
-
   // X / (X * Y) --> 1.0 / Y
   // Reassociate to (X / X -> 1.0) is legal when NaNs are not allowed.
   // We can ignore the possibility that X is infinity because INF/INF is NaN.
@@ -1254,6 +1234,17 @@ Instruction *InstCombiner::visitFDiv(BinaryOperator &I) {
     return &I;
   }
 
+  // X / fabs(X) -> copysign(1.0, X)
+  // fabs(X) / X -> copysign(1.0, X)
+  if (I.hasNoNaNs() && I.hasNoInfs() &&
+      (match(&I,
+             m_FDiv(m_Value(X), m_Intrinsic<Intrinsic::fabs>(m_Deferred(X)))) ||
+       match(&I, m_FDiv(m_Intrinsic<Intrinsic::fabs>(m_Value(X)),
+                        m_Deferred(X))))) {
+    Value *V = Builder.CreateBinaryIntrinsic(
+        Intrinsic::copysign, ConstantFP::get(I.getType(), 1.0), X, &I);
+    return replaceInstUsesWith(I, V);
+  }
   return nullptr;
 }
 

@@ -23,16 +23,16 @@ SelectionTree makeSelectionTree(const StringRef MarkedCode, ParsedAST &AST) {
   Annotations Test(MarkedCode);
   switch (Test.points().size()) {
   case 1: // Point selection.
-    return SelectionTree(AST.getASTContext(),
+    return SelectionTree(AST.getASTContext(), AST.getTokens(),
                          cantFail(positionToOffset(Test.code(), Test.point())));
   case 2: // Range selection.
     return SelectionTree(
-        AST.getASTContext(),
+        AST.getASTContext(), AST.getTokens(),
         cantFail(positionToOffset(Test.code(), Test.points()[0])),
         cantFail(positionToOffset(Test.code(), Test.points()[1])));
   default:
     ADD_FAILURE() << "Expected 1-2 points for selection.\n" << MarkedCode;
-    return SelectionTree(AST.getASTContext(), 0u, 0u);
+    return SelectionTree(AST.getASTContext(), AST.getTokens(), 0u, 0u);
   }
 }
 
@@ -210,6 +210,15 @@ TEST(SelectionTest, CommonAncestor) {
           )cpp",
           "FunctionProtoTypeLoc",
       },
+      {
+          R"cpp(
+            struct S {
+              int foo;
+              int bar() { return [[f^oo]]; }
+            };
+          )cpp",
+          "MemberExpr", // Not implicit CXXThisExpr!
+      },
 
       // Point selections.
       {"void foo() { [[^foo]](); }", "DeclRefExpr"},
@@ -218,6 +227,9 @@ TEST(SelectionTest, CommonAncestor) {
       {"void foo() { [[foo^()]]; }", "CallExpr"},
       {"void foo() { [[foo^]] (); }", "DeclRefExpr"},
       {"int bar; void foo() [[{ foo (); }]]^", "CompoundStmt"},
+
+      // Ignores whitespace, comments, and semicolons in the selection.
+      {"void foo() { [[foo^()]]; /*comment*/^}", "CallExpr"},
 
       // Tricky case: FunctionTypeLoc in FunctionDecl has a hole in it.
       {"[[^void]] foo();", "BuiltinTypeLoc"},
@@ -258,6 +270,22 @@ TEST(SelectionTest, CommonAncestor) {
              struct Foo<U<int>*> {};
           )cpp",
           "TemplateTemplateParmDecl"},
+
+      // Foreach has a weird AST, ensure we can select parts of the range init.
+      // This used to fail, because the DeclStmt for C claimed the whole range.
+      {
+          R"cpp(
+            struct Str {
+              const char *begin();
+              const char *end();
+            };
+            Str makeStr(const char*);
+            void loop() {
+              for (const char* C : [[mak^eStr("foo"^)]])
+                ;
+            }
+          )cpp",
+          "CallExpr"},
   };
   for (const Case &C : Cases) {
     Annotations Test(C.Code);
@@ -343,6 +371,25 @@ TEST(SelectionTest, Selected) {
   }
 }
 
+TEST(SelectionTest, PathologicalPreprocessor) {
+  const char *Case = R"cpp(
+#define MACRO while(1)
+    void test() {
+#include "Expand.inc"
+        br^eak;
+    }
+  )cpp";
+  Annotations Test(Case);
+  auto TU = TestTU::withCode(Test.code());
+  TU.AdditionalFiles["Expand.inc"] = "MACRO\n";
+  auto AST = TU.build();
+  EXPECT_THAT(AST.getDiagnostics(), ::testing::IsEmpty());
+  auto T = makeSelectionTree(Case, AST);
+
+  EXPECT_EQ("BreakStmt", T.commonAncestor()->kind());
+  EXPECT_EQ("WhileStmt", T.commonAncestor()->Parent->kind());
+}
+
 TEST(SelectionTest, Implicit) {
   const char* Test = R"cpp(
     struct S { S(const char*); };
@@ -358,6 +405,8 @@ TEST(SelectionTest, Implicit) {
   EXPECT_EQ("CXXConstructExpr", nodeKind(Str->Parent->Parent));
   EXPECT_EQ(Str, &Str->Parent->Parent->ignoreImplicit())
       << "Didn't unwrap " << nodeKind(&Str->Parent->Parent->ignoreImplicit());
+
+  EXPECT_EQ("CXXConstructExpr", nodeKind(&Str->outerImplicit()));
 }
 
 } // namespace

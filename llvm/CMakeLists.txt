@@ -178,6 +178,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 option(LLVM_INSTALL_BINUTILS_SYMLINKS
   "Install symlinks from the binutils tool names to the corresponding LLVM tools." OFF)
 
+option(LLVM_INSTALL_CCTOOLS_SYMLINKS
+  "Install symlinks from the cctools tool names to the corresponding LLVM tools." OFF)
+
 option(LLVM_INSTALL_UTILS "Include utility binaries in the 'install' target." OFF)
 
 option(LLVM_INSTALL_TOOLCHAIN_ONLY "Only include toolchain files in the 'install' target." OFF)
@@ -387,6 +390,7 @@ else()
   option(LLVM_ENABLE_LOCAL_SUBMODULE_VISIBILITY "Compile with -fmodules-local-submodule-visibility." ON)
 endif()
 option(LLVM_ENABLE_LIBCXX "Use libc++ if available." OFF)
+option(LLVM_STATIC_LINK_CXX_STDLIB "Statically link the standard library." OFF)
 option(LLVM_ENABLE_LLD "Use lld as C and C++ linker." OFF)
 option(LLVM_ENABLE_PEDANTIC "Compile with pedantic enabled." ON)
 option(LLVM_ENABLE_WERROR "Fail and stop if a warning is triggered." OFF)

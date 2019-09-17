@@ -137,6 +137,7 @@ protected:
   bool HasBTI = false;
   bool HasRandGen = false;
   bool HasMTE = false;
+  bool HasTME = false;
 
   // Arm SVE2 extensions
   bool HasSVE2AES = false;
@@ -190,14 +191,15 @@ protected:
   bool UseEL1ForTP = false;
   bool UseEL2ForTP = false;
   bool UseEL3ForTP = false;
+  bool AllowTaggedGlobals = false;
   uint8_t MaxInterleaveFactor = 2;
   uint8_t VectorInsertExtractBaseCost = 3;
   uint16_t CacheLineSize = 0;
   uint16_t PrefetchDistance = 0;
   uint16_t MinPrefetchStride = 1;
   unsigned MaxPrefetchIterationsAhead = UINT_MAX;
-  unsigned PrefFunctionAlignment = 0;
-  unsigned PrefLoopAlignment = 0;
+  unsigned PrefFunctionLogAlignment = 0;
+  unsigned PrefLoopLogAlignment = 0;
   unsigned MaxJumpTableSize = 0;
   unsigned WideningBaseCost = 0;
 
@@ -254,7 +256,7 @@ public:
     return &getInstrInfo()->getRegisterInfo();
   }
   const CallLowering *getCallLowering() const override;
-  const InstructionSelector *getInstructionSelector() const override;
+  InstructionSelector *getInstructionSelector() const override;
   const LegalizerInfo *getLegalizerInfo() const override;
   const RegisterBankInfo *getRegBankInfo() const override;
   const Triple &getTargetTriple() const { return TargetTriple; }
@@ -357,8 +359,10 @@ public:
   unsigned getMaxPrefetchIterationsAhead() const {
     return MaxPrefetchIterationsAhead;
   }
-  unsigned getPrefFunctionAlignment() const { return PrefFunctionAlignment; }
-  unsigned getPrefLoopAlignment() const { return PrefLoopAlignment; }
+  unsigned getPrefFunctionLogAlignment() const {
+    return PrefFunctionLogAlignment;
+  }
+  unsigned getPrefLoopLogAlignment() const { return PrefLoopLogAlignment; }
 
   unsigned getMaximumJumpTableSize() const { return MaxJumpTableSize; }
 
@@ -387,6 +391,7 @@ public:
   bool hasBTI() const { return HasBTI; }
   bool hasRandGen() const { return HasRandGen; }
   bool hasMTE() const { return HasMTE; }
+  bool hasTME() const { return HasTME; }
   // Arm SVE2 extensions
   bool hasSVE2AES() const { return HasSVE2AES; }
   bool hasSVE2SM4() const { return HasSVE2SM4; }
@@ -405,6 +410,8 @@ public:
   bool isTargetCOFF() const { return TargetTriple.isOSBinFormatCOFF(); }
   bool isTargetELF() const { return TargetTriple.isOSBinFormatELF(); }
   bool isTargetMachO() const { return TargetTriple.isOSBinFormatMachO(); }
+
+  bool isTargetILP32() const { return TargetTriple.isArch32Bit(); }
 
   bool useAA() const override { return UseAA; }
 
@@ -432,6 +439,12 @@ public:
   bool hasFMI() const { return HasFMI; }
   bool hasRCPC_IMMO() const { return HasRCPC_IMMO; }
 
+  bool addrSinkUsingGEPs() const override {
+    // Keeping GEPs inbounds is important for exploiting AArch64
+    // addressing-modes in ILP32 mode.
+    return useAA() || isTargetILP32();
+  }
+
   bool useSmallAddressing() const {
     switch (TLInfo.getTargetMachine().getCodeModel()) {
       case CodeModel::Kernel:
@@ -450,11 +463,11 @@ public:
 
   /// ClassifyGlobalReference - Find the target operand flags that describe
   /// how a global value should be referenced for the current subtarget.
-  unsigned char ClassifyGlobalReference(const GlobalValue *GV,
-                                        const TargetMachine &TM) const;
+  unsigned ClassifyGlobalReference(const GlobalValue *GV,
+                                   const TargetMachine &TM) const;
 
-  unsigned char classifyGlobalFunctionReference(const GlobalValue *GV,
-                                                const TargetMachine &TM) const;
+  unsigned classifyGlobalFunctionReference(const GlobalValue *GV,
+                                           const TargetMachine &TM) const;
 
   void overrideSchedPolicy(MachineSchedPolicy &Policy,
                            unsigned NumRegionInstrs) const override;

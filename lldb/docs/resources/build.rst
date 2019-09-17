@@ -12,7 +12,7 @@ In particular, it requires both Clang and LLVM itself in order to build. Due to
 this tight integration the Getting Started guides for both of these projects
 come as prerequisite reading:
 
-* `LLVM <http://llvm.org/docs/GettingStarted.html>`_
+* `LLVM <https://llvm.org/docs/GettingStarted.html>`_
 * `Clang <http://clang.llvm.org/get_started.html>`_
 
 The following requirements are shared on all platforms.
@@ -93,7 +93,7 @@ CMake is a cross-platform build-generator tool. CMake does not build the
 project, it generates the files needed by your build tool. The recommended
 build tool for LLVM is Ninja, but other generators like Xcode or Visual Studio
 may be used as well. Please also read `Building LLVM with CMake
-<http://llvm.org/docs/CMake.html>`_.
+<https://llvm.org/docs/CMake.html>`_.
 
 Regular in-tree builds
 **********************
@@ -125,10 +125,10 @@ checked out above, but now we will have two build-trees:
 * the main build-tree for LLDB in ``/path/to/lldb-build``
 * a provided build-tree for LLVM and Clang in ``/path/to/llvm-build``
 
-Run CMake with ``-B`` pointing to a new directory for the provided build-tree
-and the positional argument pointing to the ``llvm`` directory in the
-source-tree. Note that we leave out LLDB here and only include Clang.
-Then we build the ``ALL`` target with ninja:
+Run CMake with ``-B`` pointing to a new directory for the provided
+build-tree\ :sup:`1` and the positional argument pointing to the ``llvm``
+directory in the source-tree. Note that we leave out LLDB here and only include
+Clang. Then we build the ``ALL`` target with ninja:
 
 ::
 
@@ -151,6 +151,11 @@ case-sensitive!):
           [<more cmake options>] /path/to/llvm-project/lldb
   > ninja lldb
 
+.. note::
+
+   #. The ``-B`` argument was undocumented for a while and is only officially
+      supported since `CMake version 3.14
+      <https://cmake.org/cmake/help/v3.14/release/3.14.html#command-line>`_
 
 .. _CommonCMakeOptions:
 
@@ -180,8 +185,6 @@ suite.
 ::
 
   > cmake -G Ninja \
-      -DLLDB_TEST_USE_CUSTOM_C_COMPILER=On \
-      -DLLDB_TEST_USE_CUSTOM_CXX_COMPILER=On \
       -DLLDB_TEST_C_COMPILER=<path to C compiler> \
       -DLLDB_TEST_CXX_COMPILER=<path to C++ compiler> \
       <path to root of llvm source tree>
@@ -223,7 +226,6 @@ Sample command line:
   > cmake -G Ninja^
       -DLLDB_TEST_DEBUG_TEST_CRASHES=1^
       -DPYTHON_HOME=C:\Python35^
-      -DLLDB_TEST_USE_CUSTOM_C_COMPILER=ON^
       -DLLDB_TEST_C_COMPILER=d:\src\llvmbuild\ninja_release\bin\clang.exe^
       <path to root of llvm source tree>
 
@@ -276,7 +278,7 @@ CMake caches
 
 CMake caches allow to store common sets of configuration options in the form of
 CMake scripts and can be useful to reproduce builds for particular use-cases
-(see by analogy `usage in LLVM and Clang <http://llvm.org/docs/AdvancedBuilds.html>`_).
+(see by analogy `usage in LLVM and Clang <https://llvm.org/docs/AdvancedBuilds.html>`_).
 A cache is passed to CMake with the ``-C`` flag, following the absolute path to
 the file on disk. Subsequent ``-D`` options are still allowed. Please find the
 currently available caches in the `lldb/cmake/caches/
@@ -288,7 +290,7 @@ Common configurations on macOS
 
 Build, test and install a distribution of LLDB from the `monorepo
 <https://github.com/llvm/llvm-project>`_ (see also `Building a Distribution of
-LLVM <http://llvm.org/docs/BuildingADistribution.html>`_):
+LLVM <https://llvm.org/docs/BuildingADistribution.html>`_):
 
 ::
 
@@ -300,6 +302,8 @@ LLVM <http://llvm.org/docs/BuildingADistribution.html>`_):
           llvm-project/llvm
 
   > DESTDIR=/path/to/lldb-install ninja -C /path/to/lldb-build check-lldb install-distribution
+
+.. _CMakeGeneratedXcodeProject:
 
 Build LLDB standalone for development with Xcode:
 
@@ -313,13 +317,19 @@ Build LLDB standalone for development with Xcode:
           llvm-project/llvm
   > ninja -C /path/to/llvm-build
 
-  > cmake -B /path/to/lldb-build -G Xcode \
+  > cmake -B /path/to/lldb-build \
           -C /path/to/llvm-project/lldb/cmake/caches/Apple-lldb-Xcode.cmake \
           -DLLVM_DIR=/path/to/llvm-build/lib/cmake/llvm \
           -DClang_DIR=/path/to/llvm-build/lib/cmake/clang \
           llvm-project/lldb
   > open lldb.xcodeproj
   > cmake --build /path/to/lldb-build --target check-lldb
+
+.. note::
+
+   The ``-B`` argument was undocumented for a while and is only officially
+   supported since `CMake version 3.14
+   <https://cmake.org/cmake/help/v3.14/release/3.14.html#command-line>`_
 
 
 Building The Documentation

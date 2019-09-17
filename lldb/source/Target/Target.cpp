@@ -206,13 +206,11 @@ const lldb::ProcessSP &Target::GetProcessSP() const { return m_process_sp; }
 lldb::REPLSP Target::GetREPL(Status &err, lldb::LanguageType language,
                              const char *repl_options, bool can_create) {
   if (language == eLanguageTypeUnknown) {
-    std::set<LanguageType> repl_languages;
+    LanguageSet repl_languages = Language::GetLanguagesSupportingREPLs();
 
-    Language::GetLanguagesSupportingREPLs(repl_languages);
-
-    if (repl_languages.size() == 1) {
-      language = *repl_languages.begin();
-    } else if (repl_languages.size() == 0) {
+    if (auto single_lang = repl_languages.GetSingularLanguage()) {
+      language = *single_lang;
+    } else if (repl_languages.Empty()) {
       err.SetErrorStringWithFormat(
           "LLDB isn't configured with REPL support for any languages.");
       return REPLSP();
@@ -307,14 +305,14 @@ BreakpointSP Target::CreateSourceRegexBreakpoint(
     const FileSpecList *containingModules,
     const FileSpecList *source_file_spec_list,
     const std::unordered_set<std::string> &function_names,
-    RegularExpression &source_regex, bool internal, bool hardware,
+    RegularExpression source_regex, bool internal, bool hardware,
     LazyBool move_to_nearest_code) {
   SearchFilterSP filter_sp(GetSearchFilterForModuleAndCUList(
       containingModules, source_file_spec_list));
   if (move_to_nearest_code == eLazyBoolCalculate)
     move_to_nearest_code = GetMoveToNearestCode() ? eLazyBoolYes : eLazyBoolNo;
   BreakpointResolverSP resolver_sp(new BreakpointResolverFileRegex(
-      nullptr, source_regex, function_names,
+      nullptr, std::move(source_regex), function_names,
       !static_cast<bool>(move_to_nearest_code)));
 
   return CreateBreakpoint(filter_sp, resolver_sp, internal, hardware, true);
@@ -549,7 +547,7 @@ SearchFilterSP Target::GetSearchFilterForModuleAndCUList(
 
 BreakpointSP Target::CreateFuncRegexBreakpoint(
     const FileSpecList *containingModules,
-    const FileSpecList *containingSourceFiles, RegularExpression &func_regex,
+    const FileSpecList *containingSourceFiles, RegularExpression func_regex,
     lldb::LanguageType requested_language, LazyBool skip_prologue,
     bool internal, bool hardware) {
   SearchFilterSP filter_sp(GetSearchFilterForModuleAndCUList(
@@ -558,7 +556,7 @@ BreakpointSP Target::CreateFuncRegexBreakpoint(
                   ? GetSkipPrologue()
                   : static_cast<bool>(skip_prologue);
   BreakpointResolverSP resolver_sp(new BreakpointResolverName(
-      nullptr, func_regex, requested_language, 0, skip));
+      nullptr, std::move(func_regex), requested_language, 0, skip));
 
   return CreateBreakpoint(filter_sp, resolver_sp, internal, hardware, true);
 }
@@ -2129,28 +2127,49 @@ Target::GetScratchTypeSystemForLanguage(lldb::LanguageType language,
   if (language == eLanguageTypeMipsAssembler // GNU AS and LLVM use it for all
                                              // assembly code
       || language == eLanguageTypeUnknown) {
-    std::set<lldb::LanguageType> languages_for_types;
-    std::set<lldb::LanguageType> languages_for_expressions;
+    LanguageSet languages_for_expressions =
+        Language::GetLanguagesSupportingTypeSystemsForExpressions();
 
-    Language::GetLanguagesSupportingTypeSystems(languages_for_types,
-                                                languages_for_expressions);
-
-    if (languages_for_expressions.count(eLanguageTypeC)) {
+    if (languages_for_expressions[eLanguageTypeC]) {
       language = eLanguageTypeC; // LLDB's default.  Override by setting the
                                  // target language.
     } else {
-      if (languages_for_expressions.empty()) {
+      if (languages_for_expressions.Empty())
         return llvm::make_error<llvm::StringError>(
             "No expression support for any languages",
             llvm::inconvertibleErrorCode());
-      } else {
-        language = *languages_for_expressions.begin();
-      }
+      language = (LanguageType)languages_for_expressions.bitvector.find_first();
     }
   }
 
   return m_scratch_type_system_map.GetTypeSystemForLanguage(language, this,
                                                             create_on_demand);
+}
+
+std::vector<TypeSystem *> Target::GetScratchTypeSystems(bool create_on_demand) {
+  if (!m_valid)
+    return {};
+
+  std::vector<TypeSystem *> scratch_type_systems;
+
+  LanguageSet languages_for_expressions =
+      Language::GetLanguagesSupportingTypeSystemsForExpressions();
+
+  for (auto bit : languages_for_expressions.bitvector.set_bits()) {
+    auto language = (LanguageType)bit;
+    auto type_system_or_err =
+        GetScratchTypeSystemForLanguage(language, create_on_demand);
+    if (!type_system_or_err)
+      LLDB_LOG_ERROR(lldb_private::GetLogIfAnyCategoriesSet(LIBLLDB_LOG_TARGET),
+                     type_system_or_err.takeError(),
+                     "Language '{}' has expression support but no scratch type "
+                     "system available",
+                     Language::GetNameForLanguageType(language));
+    else
+      scratch_type_systems.emplace_back(&type_system_or_err.get());
+  }
+
+  return scratch_type_systems;
 }
 
 PersistentExpressionState *
@@ -3203,33 +3222,51 @@ void Target::StopHook::GetDescription(Stream *s,
   s->SetIndentLevel(indent_level);
 }
 
-// class TargetProperties
-
-// clang-format off
 static constexpr OptionEnumValueElement g_dynamic_value_types[] = {
-    {eNoDynamicValues, "no-dynamic-values",
-     "Don't calculate the dynamic type of values"},
-    {eDynamicCanRunTarget, "run-target", "Calculate the dynamic type of values "
-                                         "even if you have to run the target."},
-    {eDynamicDontRunTarget, "no-run-target",
-     "Calculate the dynamic type of values, but don't run the target."} };
+    {
+        eNoDynamicValues,
+        "no-dynamic-values",
+        "Don't calculate the dynamic type of values",
+    },
+    {
+        eDynamicCanRunTarget,
+        "run-target",
+        "Calculate the dynamic type of values "
+        "even if you have to run the target.",
+    },
+    {
+        eDynamicDontRunTarget,
+        "no-run-target",
+        "Calculate the dynamic type of values, but don't run the target.",
+    },
+};
 
 OptionEnumValues lldb_private::GetDynamicValueTypes() {
   return OptionEnumValues(g_dynamic_value_types);
 }
 
 static constexpr OptionEnumValueElement g_inline_breakpoint_enums[] = {
-    {eInlineBreakpointsNever, "never", "Never look for inline breakpoint "
-                                       "locations (fastest). This setting "
-                                       "should only be used if you know that "
-                                       "no inlining occurs in your programs."},
-    {eInlineBreakpointsHeaders, "headers",
-     "Only check for inline breakpoint locations when setting breakpoints in "
-     "header files, but not when setting breakpoint in implementation source "
-     "files (default)."},
-    {eInlineBreakpointsAlways, "always",
-     "Always look for inline breakpoint locations when setting file and line "
-     "breakpoints (slower but most accurate)."} };
+    {
+        eInlineBreakpointsNever,
+        "never",
+        "Never look for inline breakpoint locations (fastest). This setting "
+        "should only be used if you know that no inlining occurs in your"
+        "programs.",
+    },
+    {
+        eInlineBreakpointsHeaders,
+        "headers",
+        "Only check for inline breakpoint locations when setting breakpoints "
+        "in header files, but not when setting breakpoint in implementation "
+        "source files (default).",
+    },
+    {
+        eInlineBreakpointsAlways,
+        "always",
+        "Always look for inline breakpoint locations when setting file and "
+        "line breakpoints (slower but most accurate).",
+    },
+};
 
 enum x86DisassemblyFlavor {
   eX86DisFlavorDefault,
@@ -3238,41 +3275,92 @@ enum x86DisassemblyFlavor {
 };
 
 static constexpr OptionEnumValueElement g_x86_dis_flavor_value_types[] = {
-    {eX86DisFlavorDefault, "default", "Disassembler default (currently att)."},
-    {eX86DisFlavorIntel, "intel", "Intel disassembler flavor."},
-    {eX86DisFlavorATT, "att", "AT&T disassembler flavor."} };
+    {
+        eX86DisFlavorDefault,
+        "default",
+        "Disassembler default (currently att).",
+    },
+    {
+        eX86DisFlavorIntel,
+        "intel",
+        "Intel disassembler flavor.",
+    },
+    {
+        eX86DisFlavorATT,
+        "att",
+        "AT&T disassembler flavor.",
+    },
+};
 
 static constexpr OptionEnumValueElement g_hex_immediate_style_values[] = {
-    {Disassembler::eHexStyleC, "c", "C-style (0xffff)."},
-    {Disassembler::eHexStyleAsm, "asm", "Asm-style (0ffffh)."} };
+    {
+        Disassembler::eHexStyleC,
+        "c",
+        "C-style (0xffff).",
+    },
+    {
+        Disassembler::eHexStyleAsm,
+        "asm",
+        "Asm-style (0ffffh).",
+    },
+};
 
 static constexpr OptionEnumValueElement g_load_script_from_sym_file_values[] = {
-    {eLoadScriptFromSymFileTrue, "true",
-     "Load debug scripts inside symbol files"},
-    {eLoadScriptFromSymFileFalse, "false",
-     "Do not load debug scripts inside symbol files."},
-    {eLoadScriptFromSymFileWarn, "warn",
-     "Warn about debug scripts inside symbol files but do not load them."} };
+    {
+        eLoadScriptFromSymFileTrue,
+        "true",
+        "Load debug scripts inside symbol files",
+    },
+    {
+        eLoadScriptFromSymFileFalse,
+        "false",
+        "Do not load debug scripts inside symbol files.",
+    },
+    {
+        eLoadScriptFromSymFileWarn,
+        "warn",
+        "Warn about debug scripts inside symbol files but do not load them.",
+    },
+};
 
-static constexpr
-OptionEnumValueElement g_load_current_working_dir_lldbinit_values[] = {
-    {eLoadCWDlldbinitTrue, "true",
-     "Load .lldbinit files from current directory"},
-    {eLoadCWDlldbinitFalse, "false",
-     "Do not load .lldbinit files from current directory"},
-    {eLoadCWDlldbinitWarn, "warn",
-     "Warn about loading .lldbinit files from current directory"} };
+static constexpr OptionEnumValueElement g_load_cwd_lldbinit_values[] = {
+    {
+        eLoadCWDlldbinitTrue,
+        "true",
+        "Load .lldbinit files from current directory",
+    },
+    {
+        eLoadCWDlldbinitFalse,
+        "false",
+        "Do not load .lldbinit files from current directory",
+    },
+    {
+        eLoadCWDlldbinitWarn,
+        "warn",
+        "Warn about loading .lldbinit files from current directory",
+    },
+};
 
 static constexpr OptionEnumValueElement g_memory_module_load_level_values[] = {
-    {eMemoryModuleLoadLevelMinimal, "minimal",
-     "Load minimal information when loading modules from memory. Currently "
-     "this setting loads sections only."},
-    {eMemoryModuleLoadLevelPartial, "partial",
-     "Load partial information when loading modules from memory. Currently "
-     "this setting loads sections and function bounds."},
-    {eMemoryModuleLoadLevelComplete, "complete",
-     "Load complete information when loading modules from memory. Currently "
-     "this setting loads sections and all symbols."} };
+    {
+        eMemoryModuleLoadLevelMinimal,
+        "minimal",
+        "Load minimal information when loading modules from memory. Currently "
+        "this setting loads sections only.",
+    },
+    {
+        eMemoryModuleLoadLevelPartial,
+        "partial",
+        "Load partial information when loading modules from memory. Currently "
+        "this setting loads sections and function bounds.",
+    },
+    {
+        eMemoryModuleLoadLevelComplete,
+        "complete",
+        "Load complete information when loading modules from memory. Currently "
+        "this setting loads sections and all symbols.",
+    },
+};
 
 #define LLDB_PROPERTIES_target
 #include "TargetProperties.inc"
@@ -3699,6 +3787,12 @@ bool TargetProperties::GetEnableSyntheticValue() const {
   const uint32_t idx = ePropertyEnableSynthetic;
   return m_collection_sp->GetPropertyAtIndexAsBoolean(
       nullptr, idx, g_target_properties[idx].default_uint_value != 0);
+}
+
+uint32_t TargetProperties::GetMaxZeroPaddingInFloatFormat() const {
+  const uint32_t idx = ePropertyMaxZeroPaddingInFloatFormat;
+  return m_collection_sp->GetPropertyAtIndexAsUInt64(
+      nullptr, idx, g_target_properties[idx].default_uint_value);
 }
 
 uint32_t TargetProperties::GetMaximumNumberOfChildrenToDisplay() const {

@@ -1913,11 +1913,17 @@ public:
     return V;
   }
 
-  Value *CreateFPToUI(Value *V, Type *DestTy, const Twine &Name = ""){
+  Value *CreateFPToUI(Value *V, Type *DestTy, const Twine &Name = "") {
+    if (IsFPConstrained)
+      return CreateConstrainedFPCast(Intrinsic::experimental_constrained_fptoui,
+                                     V, DestTy, nullptr, Name);
     return CreateCast(Instruction::FPToUI, V, DestTy, Name);
   }
 
-  Value *CreateFPToSI(Value *V, Type *DestTy, const Twine &Name = ""){
+  Value *CreateFPToSI(Value *V, Type *DestTy, const Twine &Name = "") {
+    if (IsFPConstrained)
+      return CreateConstrainedFPCast(Intrinsic::experimental_constrained_fptosi,
+                                     V, DestTy, nullptr, Name);
     return CreateCast(Instruction::FPToSI, V, DestTy, Name);
   }
 
@@ -2059,7 +2065,6 @@ public:
       MDNode *FPMathTag = nullptr,
       Optional<ConstrainedFPIntrinsic::RoundingMode> Rounding = None,
       Optional<ConstrainedFPIntrinsic::ExceptionBehavior> Except = None) {
-    Value *RoundingV = getConstrainedFPRounding(Rounding);
     Value *ExceptV = getConstrainedFPExcept(Except);
 
     FastMathFlags UseFMF = FMF;
@@ -2067,13 +2072,22 @@ public:
       UseFMF = FMFSource->getFastMathFlags();
 
     CallInst *C;
-    if (ID == Intrinsic::experimental_constrained_fpext)
-      C = CreateIntrinsic(ID, {DestTy, V->getType()}, {V, ExceptV}, nullptr,
-                          Name);
-    else
+    switch (ID) {
+    default: {
+      Value *RoundingV = getConstrainedFPRounding(Rounding);
       C = CreateIntrinsic(ID, {DestTy, V->getType()}, {V, RoundingV, ExceptV},
                           nullptr, Name);
-    return cast<CallInst>(setFPAttrs(C, FPMathTag, UseFMF));
+    } break;
+    case Intrinsic::experimental_constrained_fpext:
+    case Intrinsic::experimental_constrained_fptoui:
+    case Intrinsic::experimental_constrained_fptosi:
+      C = CreateIntrinsic(ID, {DestTy, V->getType()}, {V, ExceptV}, nullptr,
+                          Name);
+      break;
+    }
+    if (isa<FPMathOperator>(C))
+      C = cast<CallInst>(setFPAttrs(C, FPMathTag, UseFMF));
+    return C;
   }
 
   // Provided to resolve 'CreateIntCast(Ptr, Ptr, "...")', giving a
@@ -2484,7 +2498,7 @@ public:
   }
 
   Value *CreatePreserveArrayAccessIndex(Value *Base, unsigned Dimension,
-                                        unsigned LastIndex) {
+                                        unsigned LastIndex, MDNode *DbgInfo) {
     assert(isa<PointerType>(Base->getType()) &&
            "Invalid Base ptr type for preserve.array.access.index.");
     auto *BaseType = Base->getType();
@@ -2506,6 +2520,8 @@ public:
     Value *DimV = getInt32(Dimension);
     CallInst *Fn =
         CreateCall(FnPreserveArrayAccessIndex, {Base, DimV, LastIndexV});
+    if (DbgInfo)
+      Fn->setMetadata(LLVMContext::MD_preserve_access_index, DbgInfo);
 
     return Fn;
   }
@@ -2523,7 +2539,8 @@ public:
     Value *DIIndex = getInt32(FieldIndex);
     CallInst *Fn =
         CreateCall(FnPreserveUnionAccessIndex, {Base, DIIndex});
-    Fn->setMetadata(LLVMContext::MD_preserve_access_index, DbgInfo);
+    if (DbgInfo)
+      Fn->setMetadata(LLVMContext::MD_preserve_access_index, DbgInfo);
 
     return Fn;
   }
@@ -2546,7 +2563,8 @@ public:
     Value *DIIndex = getInt32(FieldIndex);
     CallInst *Fn = CreateCall(FnPreserveStructAccessIndex,
                               {Base, GEPIndex, DIIndex});
-    Fn->setMetadata(LLVMContext::MD_preserve_access_index, DbgInfo);
+    if (DbgInfo)
+      Fn->setMetadata(LLVMContext::MD_preserve_access_index, DbgInfo);
 
     return Fn;
   }

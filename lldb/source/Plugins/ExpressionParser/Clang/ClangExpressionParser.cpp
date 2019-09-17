@@ -213,16 +213,15 @@ private:
   std::shared_ptr<clang::TextDiagnosticBuffer> m_passthrough;
 };
 
-static void
-SetupModuleHeaderPaths(CompilerInstance *compiler,
-                       std::vector<ConstString> include_directories,
-                       lldb::TargetSP target_sp) {
+static void SetupModuleHeaderPaths(CompilerInstance *compiler,
+                                   std::vector<std::string> include_directories,
+                                   lldb::TargetSP target_sp) {
   Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
 
   HeaderSearchOptions &search_opts = compiler->getHeaderSearchOpts();
 
-  for (ConstString dir : include_directories) {
-    search_opts.AddPath(dir.AsCString(), frontend::System, false, true);
+  for (const std::string &dir : include_directories) {
+    search_opts.AddPath(dir, frontend::System, false, true);
     LLDB_LOG(log, "Added user include dir: {0}", dir);
   }
 
@@ -261,7 +260,7 @@ SetupModuleHeaderPaths(CompilerInstance *compiler,
 
 ClangExpressionParser::ClangExpressionParser(
     ExecutionContextScope *exe_scope, Expression &expr,
-    bool generate_debug_info, std::vector<ConstString> include_directories)
+    bool generate_debug_info, std::vector<std::string> include_directories)
     : ExpressionParser(exe_scope, expr, generate_debug_info), m_compiler(),
       m_pp_callbacks(nullptr),
       m_include_directories(std::move(include_directories)) {
@@ -908,10 +907,13 @@ ClangExpressionParser::ParseInternal(DiagnosticManager &diagnostic_manager,
       if (file.Write(expr_text, bytes_written).Success()) {
         if (bytes_written == expr_text_len) {
           file.Close();
-          source_mgr.setMainFileID(source_mgr.createFileID(
-              m_compiler->getFileManager().getFile(result_path),
-              SourceLocation(), SrcMgr::C_User));
-          created_main_file = true;
+          if (auto fileEntry =
+                  m_compiler->getFileManager().getFile(result_path)) {
+            source_mgr.setMainFileID(source_mgr.createFileID(
+                *fileEntry,
+                SourceLocation(), SrcMgr::C_User));
+            created_main_file = true;
+          }
         }
       }
     }

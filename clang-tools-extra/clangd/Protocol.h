@@ -873,6 +873,12 @@ struct ApplyWorkspaceEditParams {
 };
 llvm::json::Value toJSON(const ApplyWorkspaceEditParams &);
 
+struct ApplyWorkspaceEditResponse {
+  bool applied = true;
+  llvm::Optional<std::string> failureReason;
+};
+bool fromJSON(const llvm::json::Value &, ApplyWorkspaceEditResponse &);
+
 struct TextDocumentPositionParams {
   /// The text document.
   TextDocumentIdentifier textDocument;
@@ -1199,7 +1205,7 @@ llvm::json::Value toJSON(const FileStatus &FStatus);
 /// specific line of the text document.
 struct SemanticHighlightingInformation {
   /// The line these highlightings belong to.
-  int Line;
+  int Line = 0;
   /// The base64 encoded string of highlighting tokens.
   std::string Tokens;
 };

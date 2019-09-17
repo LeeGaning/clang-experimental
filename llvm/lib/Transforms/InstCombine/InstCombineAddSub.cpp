@@ -1690,13 +1690,9 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
         if (SPF == SPF_ABS || SPF == SPF_NABS) {
           // This is a negate of an ABS/NABS pattern. Just swap the operands
           // of the select.
-          SelectInst *SI = cast<SelectInst>(Op1);
-          Value *TrueVal = SI->getTrueValue();
-          Value *FalseVal = SI->getFalseValue();
-          SI->setTrueValue(FalseVal);
-          SI->setFalseValue(TrueVal);
+          cast<SelectInst>(Op1)->swapValues();
           // Don't swap prof metadata, we didn't change the branch behavior.
-          return replaceInstUsesWith(I, SI);
+          return replaceInstUsesWith(I, Op1);
         }
       }
     }
@@ -1721,12 +1717,38 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
       return BinaryOperator::CreateNeg(Y);
   }
 
+  // (sub (or A, B) (and A, B)) --> (xor A, B)
+  {
+    Value *A, *B;
+    if (match(Op1, m_And(m_Value(A), m_Value(B))) &&
+        match(Op0, m_c_Or(m_Specific(A), m_Specific(B))))
+      return BinaryOperator::CreateXor(A, B);
+  }
+
+  // (sub (and A, B) (or A, B)) --> neg (xor A, B)
+  {
+    Value *A, *B;
+    if (match(Op0, m_And(m_Value(A), m_Value(B))) &&
+        match(Op1, m_c_Or(m_Specific(A), m_Specific(B))) &&
+        (Op0->hasOneUse() || Op1->hasOneUse()))
+      return BinaryOperator::CreateNeg(Builder.CreateXor(A, B));
+  }
+
   // (sub (or A, B), (xor A, B)) --> (and A, B)
   {
     Value *A, *B;
     if (match(Op1, m_Xor(m_Value(A), m_Value(B))) &&
         match(Op0, m_c_Or(m_Specific(A), m_Specific(B))))
       return BinaryOperator::CreateAnd(A, B);
+  }
+
+  // (sub (xor A, B) (or A, B)) --> neg (and A, B)
+  {
+    Value *A, *B;
+    if (match(Op0, m_Xor(m_Value(A), m_Value(B))) &&
+        match(Op1, m_c_Or(m_Specific(A), m_Specific(B))) &&
+        (Op0->hasOneUse() || Op1->hasOneUse()))
+      return BinaryOperator::CreateNeg(Builder.CreateAnd(A, B));
   }
 
   {
@@ -1813,7 +1835,7 @@ Instruction *InstCombiner::visitSub(BinaryOperator &I) {
         std::swap(LHS, RHS);
       // LHS is now O above and expected to have at least 2 uses (the min/max)
       // NotA is epected to have 2 uses from the min/max and 1 from the sub.
-      if (IsFreeToInvert(LHS, !LHS->hasNUsesOrMore(3)) &&
+      if (isFreeToInvert(LHS, !LHS->hasNUsesOrMore(3)) &&
           !NotA->hasNUsesOrMore(4)) {
         // Note: We don't generate the inverse max/min, just create the not of
         // it and let other folds do the rest.
@@ -1900,6 +1922,22 @@ static Instruction *foldFNegIntoConstant(Instruction &I) {
   return nullptr;
 }
 
+static Instruction *hoistFNegAboveFMulFDiv(Instruction &I,
+                                           InstCombiner::BuilderTy &Builder) {
+  Value *FNeg;
+  if (!match(&I, m_FNeg(m_Value(FNeg))))
+    return nullptr;
+
+  Value *X, *Y;
+  if (match(FNeg, m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))
+    return BinaryOperator::CreateFMulFMF(Builder.CreateFNegFMF(X, &I), Y, &I);
+
+  if (match(FNeg, m_OneUse(m_FDiv(m_Value(X), m_Value(Y)))))
+    return BinaryOperator::CreateFDivFMF(Builder.CreateFNegFMF(X, &I), Y, &I);
+
+  return nullptr;
+}
+
 Instruction *InstCombiner::visitFNeg(UnaryOperator &I) {
   Value *Op = I.getOperand(0);
 
@@ -1916,6 +1954,9 @@ Instruction *InstCombiner::visitFNeg(UnaryOperator &I) {
   if (I.hasNoSignedZeros() &&
       match(Op, m_OneUse(m_FSub(m_Value(X), m_Value(Y)))))
     return BinaryOperator::CreateFSubFMF(Y, X, &I);
+
+  if (Instruction *R = hoistFNegAboveFMulFDiv(I, Builder))
+    return R;
 
   return nullptr;
 }
@@ -1937,6 +1978,9 @@ Instruction *InstCombiner::visitFSub(BinaryOperator &I) {
 
   if (Instruction *X = foldFNegIntoConstant(I))
     return X;
+
+  if (Instruction *R = hoistFNegAboveFMulFDiv(I, Builder))
+    return R;
 
   Value *X, *Y;
   Constant *C;

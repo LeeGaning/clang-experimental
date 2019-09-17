@@ -133,6 +133,8 @@ def HasBTI           : Predicate<"Subtarget->hasBTI()">,
                        AssemblerPredicate<"FeatureBranchTargetId", "bti">;
 def HasMTE           : Predicate<"Subtarget->hasMTE()">,
                        AssemblerPredicate<"FeatureMTE", "mte">;
+def HasTME           : Predicate<"Subtarget->hasTME()">,
+                       AssemblerPredicate<"FeatureTME", "tme">;
 def HasETE           : Predicate<"Subtarget->hasETE()">,
                        AssemblerPredicate<"FeatureETE", "ete">;
 def HasTRBE          : Predicate<"Subtarget->hasTRBE()">,
@@ -435,6 +437,13 @@ let RecomputePerFunction = 1 in {
 
   def UseBTI : Predicate<[{ MF->getFunction().hasFnAttribute("branch-target-enforcement") }]>;
   def NotUseBTI : Predicate<[{ !MF->getFunction().hasFnAttribute("branch-target-enforcement") }]>;
+
+  // Toggles patterns which aren't beneficial in GlobalISel when we aren't
+  // optimizing. This allows us to selectively use patterns without impacting
+  // SelectionDAG's behaviour.
+  // FIXME: One day there will probably be a nicer way to check for this, but
+  // today is not that day.
+  def OptimizedGISelOrOtherSelector : Predicate<"!MF->getFunction().hasOptNone() || MF->getProperties().hasProperty(MachineFunctionProperties::Property::FailedISel) || !MF->getProperties().hasProperty(MachineFunctionProperties::Property::Legalized)">;
 }
 
 include "AArch64InstrFormats.td"
@@ -808,6 +817,23 @@ def : InstAlias<"sys $op1, $Cn, $Cm, $op2",
                 (SYSxt imm0_7:$op1, sys_cr_op:$Cn,
                  sys_cr_op:$Cm, imm0_7:$op2, XZR)>;
 
+
+let Predicates = [HasTME] in {
+
+def TSTART : TMSystemI<0b0000, "tstart",
+                      [(set GPR64:$Rt, (int_aarch64_tstart))]>;
+
+def TCOMMIT : TMSystemINoOperand<0b0000, "tcommit", [(int_aarch64_tcommit)]>;
+
+def TCANCEL : TMSystemException<0b011, "tcancel",
+                                [(int_aarch64_tcancel i64_imm0_65535:$imm)]>;
+
+def TTEST : TMSystemI<0b0001, "ttest", [(set GPR64:$Rt, (int_aarch64_ttest))]> {
+  let mayLoad = 0;
+  let mayStore = 0;
+}
+} // HasTME
+
 //===----------------------------------------------------------------------===//
 // Move immediate instructions.
 //===----------------------------------------------------------------------===//
@@ -819,12 +845,12 @@ let PostEncoderMethod = "fixMOVZ" in
 defm MOVZ : MoveImmediate<0b10, "movz">;
 
 // First group of aliases covers an implicit "lsl #0".
-def : InstAlias<"movk $dst, $imm", (MOVKWi GPR32:$dst, imm0_65535:$imm, 0), 0>;
-def : InstAlias<"movk $dst, $imm", (MOVKXi GPR64:$dst, imm0_65535:$imm, 0), 0>;
-def : InstAlias<"movn $dst, $imm", (MOVNWi GPR32:$dst, imm0_65535:$imm, 0)>;
-def : InstAlias<"movn $dst, $imm", (MOVNXi GPR64:$dst, imm0_65535:$imm, 0)>;
-def : InstAlias<"movz $dst, $imm", (MOVZWi GPR32:$dst, imm0_65535:$imm, 0)>;
-def : InstAlias<"movz $dst, $imm", (MOVZXi GPR64:$dst, imm0_65535:$imm, 0)>;
+def : InstAlias<"movk $dst, $imm", (MOVKWi GPR32:$dst, i32_imm0_65535:$imm, 0), 0>;
+def : InstAlias<"movk $dst, $imm", (MOVKXi GPR64:$dst, i32_imm0_65535:$imm, 0), 0>;
+def : InstAlias<"movn $dst, $imm", (MOVNWi GPR32:$dst, i32_imm0_65535:$imm, 0)>;
+def : InstAlias<"movn $dst, $imm", (MOVNXi GPR64:$dst, i32_imm0_65535:$imm, 0)>;
+def : InstAlias<"movz $dst, $imm", (MOVZWi GPR32:$dst, i32_imm0_65535:$imm, 0)>;
+def : InstAlias<"movz $dst, $imm", (MOVZXi GPR64:$dst, i32_imm0_65535:$imm, 0)>;
 
 // Next, we have various ELF relocations with the ":XYZ_g0:sym" syntax.
 def : InstAlias<"movz $Rd, $sym", (MOVZXi GPR64:$Rd, movw_symbol_g3:$sym, 48)>;
@@ -921,8 +947,12 @@ def trunc_imm : SDNodeXForm<imm, [{
 def gi_trunc_imm : GICustomOperandRenderer<"renderTruncImm">,
   GISDNodeXFormEquiv<trunc_imm>;
 
+let Predicates = [OptimizedGISelOrOtherSelector] in {
+// The SUBREG_TO_REG isn't eliminated at -O0, which can result in pointless
+// copies.
 def : Pat<(i64 i64imm_32bit:$src),
           (SUBREG_TO_REG (i64 0), (MOVi32imm (trunc_imm imm:$src)), sub_32)>;
+}
 
 // Materialize FP constants via MOVi32imm/MOVi64imm (MachO large code model).
 def bitcast_fpimm_to_i32 : SDNodeXForm<fpimm, [{
@@ -1016,10 +1046,10 @@ def : Pat<(sub GPR32:$Rn, arith_shifted_reg32:$Rm),
 def : Pat<(sub GPR64:$Rn, arith_shifted_reg64:$Rm),
           (SUBSXrs GPR64:$Rn, arith_shifted_reg64:$Rm)>;
 let AddedComplexity = 1 in {
-def : Pat<(sub GPR32sp:$R2, arith_extended_reg32<i32>:$R3),
-          (SUBSWrx GPR32sp:$R2, arith_extended_reg32<i32>:$R3)>;
-def : Pat<(sub GPR64sp:$R2, arith_extended_reg32to64<i64>:$R3),
-          (SUBSXrx GPR64sp:$R2, arith_extended_reg32to64<i64>:$R3)>;
+def : Pat<(sub GPR32sp:$R2, arith_extended_reg32_i32:$R3),
+          (SUBSWrx GPR32sp:$R2, arith_extended_reg32_i32:$R3)>;
+def : Pat<(sub GPR64sp:$R2, arith_extended_reg32to64_i64:$R3),
+          (SUBSXrx GPR64sp:$R2, arith_extended_reg32to64_i64:$R3)>;
 }
 
 // Because of the immediate format for add/sub-imm instructions, the
@@ -3285,19 +3315,36 @@ defm FNMSUB : ThreeOperandFPData<1, 1, "fnmsub",
 
 // N.b. FMSUB etc have the accumulator at the *end* of (outs), unlike
 // the NEON variant.
+
+// Here we handle first -(a + b*c) for FNMADD:
+
+let Predicates = [HasNEON, HasFullFP16] in
+def : Pat<(f16 (fma (fneg FPR16:$Rn), FPR16:$Rm, FPR16:$Ra)),
+          (FMSUBHrrr FPR16:$Rn, FPR16:$Rm, FPR16:$Ra)>;
+
 def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, FPR32:$Ra)),
           (FMSUBSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
 
 def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, FPR64:$Ra)),
           (FMSUBDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
 
-// We handled -(a + b*c) for FNMADD above, now it's time for "(-a) + (-b)*c" and
-// "(-a) + b*(-c)".
+// Now it's time for "(-a) + (-b)*c"
+
+let Predicates = [HasNEON, HasFullFP16] in
+def : Pat<(f16 (fma (fneg FPR16:$Rn), FPR16:$Rm, (fneg FPR16:$Ra))),
+          (FNMADDHrrr FPR16:$Rn, FPR16:$Rm, FPR16:$Ra)>;
+
 def : Pat<(f32 (fma (fneg FPR32:$Rn), FPR32:$Rm, (fneg FPR32:$Ra))),
           (FNMADDSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
 
 def : Pat<(f64 (fma (fneg FPR64:$Rn), FPR64:$Rm, (fneg FPR64:$Ra))),
           (FNMADDDrrr FPR64:$Rn, FPR64:$Rm, FPR64:$Ra)>;
+
+// And here "(-a) + b*(-c)"
+
+let Predicates = [HasNEON, HasFullFP16] in
+def : Pat<(f16 (fma FPR16:$Rn, (fneg FPR16:$Rm), (fneg FPR16:$Ra))),
+          (FNMADDHrrr FPR16:$Rn, FPR16:$Rm, FPR16:$Ra)>;
 
 def : Pat<(f32 (fma FPR32:$Rn, (fneg FPR32:$Rm), (fneg FPR32:$Ra))),
           (FNMADDSrrr FPR32:$Rn, FPR32:$Rm, FPR32:$Ra)>;
@@ -6942,6 +6989,16 @@ def : Pat<(AArch64tcret texternalsym:$dst, (i32 timm:$FPDiff)),
 
 def MOVMCSym : Pseudo<(outs GPR64:$dst), (ins i64imm:$sym), []>, Sched<[]>;
 def : Pat<(i64 (AArch64LocalRecover mcsym:$sym)), (MOVMCSym mcsym:$sym)>;
+
+// Extracting lane zero is a special case where we can just use a plain
+// EXTRACT_SUBREG instruction, which will become FMOV. This is easier for the
+// rest of the compiler, especially the register allocator and copy propagation,
+// to reason about, so is preferred when it's possible to use it.
+let AddedComplexity = 10 in {
+  def : Pat<(i64 (extractelt (v2i64 V128:$V), (i64 0))), (EXTRACT_SUBREG V128:$V, dsub)>;
+  def : Pat<(i32 (extractelt (v4i32 V128:$V), (i64 0))), (EXTRACT_SUBREG V128:$V, ssub)>;
+  def : Pat<(i32 (extractelt (v2i32 V64:$V), (i64 0))), (EXTRACT_SUBREG V64:$V, ssub)>;
+}
 
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"

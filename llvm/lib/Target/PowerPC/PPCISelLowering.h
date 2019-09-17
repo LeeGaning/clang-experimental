@@ -412,8 +412,9 @@ namespace llvm {
       /// representation.
       QBFLT,
 
-      /// Custom extend v4f32 to v2f64.
-      FP_EXTEND_LH,
+      /// FP_EXTEND_HALF(VECTOR, IDX) - Custom extend upper (IDX=0) half or
+      /// lower (IDX=1) half of v4f32 to v2f64.
+      FP_EXTEND_HALF,
 
       /// CHAIN = STBRX CHAIN, GPRC, Ptr, Type - This is a
       /// byte-swapping store instruction.  It byte-swaps the low "Type" bits of
@@ -735,7 +736,7 @@ namespace llvm {
                                        const SelectionDAG &DAG,
                                        unsigned Depth = 0) const override;
 
-    unsigned getPrefLoopAlignment(MachineLoop *ML) const override;
+    llvm::Align getPrefLoopAlignment(MachineLoop *ML) const override;
 
     bool shouldInsertFencesForAtomic(const Instruction *I) const override {
       return true;
@@ -1019,6 +1020,8 @@ namespace llvm {
                                          SDValue Chain, SDValue &LROpOut,
                                          SDValue &FPOpOut,
                                          const SDLoc &dl) const;
+
+    SDValue getTOCEntry(SelectionDAG &DAG, const SDLoc &dl, SDValue GA) const;
 
     SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
     SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
